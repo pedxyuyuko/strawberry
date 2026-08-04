@@ -61,7 +61,8 @@
 #include "covermanager/albumcoverloaderresult.h"
 #include "covermanager/albumcoverimageresult.h"
 
-class About;
+class AboutDialog;
+class Appearance;
 class Console;
 class AlbumCoverManager;
 class Application;
@@ -81,7 +82,7 @@ class OrganizeDialog;
 class PlaylistListContainer;
 class QueueView;
 class SystemTrayIcon;
-#ifdef HAVE_MUSICBRAINZ
+#ifdef HAVE_TAGFETCHER
 class TagFetcher;
 #endif
 class TrackSelectionDialog;
@@ -97,7 +98,6 @@ class Windows7ThumbBar;
 class WinSystemMediaTransportControls;
 #endif
 class AddStreamDialog;
-class LastFMImportDialog;
 class RadioViewContainer;
 #if QT_CONFIG(sessionmanager)
 class QSessionManager;
@@ -118,6 +118,7 @@ class MainWindow : public QMainWindow, public PlatformInterface {
                       DiscordRichPresence *discord_rich_presence,
 #endif
                       const CommandlineOptions &options,
+                      const QString &default_style,
                       QWidget *parent = nullptr);
   ~MainWindow() override;
 
@@ -157,7 +158,7 @@ class MainWindow : public QMainWindow, public PlatformInterface {
   void ForceShowOSD(const Song &song, const bool toggle);
 
   void PlaylistMenuHidden();
-  void PlaylistRightClick(const QPoint global_pos, const QModelIndex &index);
+  void ShowPlaylistContextMenu(const QPoint global_pos, const QModelIndex &index);
   void PlaylistCurrentChanged(const QModelIndex &current);
   void PlaylistViewSelectionModelChanged();
   void PlaylistPlay();
@@ -317,13 +318,14 @@ class MainWindow : public QMainWindow, public PlatformInterface {
 #endif
 
   Application *app_;
+  SharedPtr<Appearance> appearance_;
   SharedPtr<SystemTrayIcon> systemtrayicon_;
   OSDBase *osd_;
 #ifdef HAVE_DISCORD_RPC
   DiscordRichPresence *discord_rich_presence_;
 #endif
   Lazy<ErrorDialog> error_dialog_;
-  Lazy<About> about_dialog_;
+  Lazy<AboutDialog> about_dialog_;
   Lazy<Console> console_;
   Lazy<EditTagDialog> edit_tag_dialog_;
   AlbumCoverChoiceController *album_cover_choice_controller_;
@@ -344,7 +346,7 @@ class MainWindow : public QMainWindow, public PlatformInterface {
   Lazy<TranscodeDialog> transcode_dialog_;
   Lazy<AddStreamDialog> add_stream_dialog_;
 
-#ifdef HAVE_MUSICBRAINZ
+#ifdef HAVE_TAGFETCHER
   ScopedPtr<TagFetcher> tag_fetcher_;
 #endif
   ScopedPtr<TrackSelectionDialog> track_selection_dialog_;
@@ -366,8 +368,6 @@ class MainWindow : public QMainWindow, public PlatformInterface {
 #endif
 
   RadioViewContainer *radio_view_;
-
-  LastFMImportDialog *lastfm_import_dialog_;
 
   QAction *collection_show_all_;
   QAction *collection_show_duplicates_;

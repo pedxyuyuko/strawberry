@@ -27,6 +27,7 @@
 #include <cstring>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 
 #include <glib.h>
 #include <glib-object.h>
@@ -110,17 +111,33 @@ std::atomic<int> GstEnginePipeline::sId{1};
 QThreadPool *GstEnginePipeline::shared_state_threadpool() {
 
   // C++11 guarantees thread-safe initialization of static local variables
-  static QThreadPool pool;
+  static QThreadPool threadpool;
   static const auto init = []() {
     // Limit the number of threads to prevent resource exhaustion
     // Use 2 threads max since state changes are typically sequential per pipeline
-    pool.setMaxThreadCount(2);
+    threadpool.setMaxThreadCount(2);
     return true;
   }();
 
   Q_UNUSED(init);
 
-  return &pool;
+  return &threadpool;
+
+}
+
+QThreadPool *GstEnginePipeline::shared_pad_send_threadpool() {
+
+  // C++11 guarantees thread-safe initialization of static local variables
+  static QThreadPool threadpool;
+  static const auto init = []() {
+    // Kept separate from shared_state_threadpool(): a pad send here can block for as long as the current track takes to drain, and must never be able to starve that pool's (normally fast) state-change tasks.
+    threadpool.setMaxThreadCount(2);
+    return true;
+  }();
+
+  Q_UNUSED(init);
+
+  return &threadpool;
 
 }
 
@@ -138,6 +155,9 @@ GstEnginePipeline::GstEnginePipeline(QObject *parent)
       buffer_duration_nanosec_(BackendSettings::kDefaultBufferDuration * kNsecPerMsec),
       buffer_low_watermark_(BackendSettings::kDefaultBufferLowWatermark),
       buffer_high_watermark_(BackendSettings::kDefaultBufferHighWatermark),
+      device_warmup_duration_ms_(BackendSettings::kDefaultDeviceWarmupDuration),
+      device_warmup_pending_(false),
+      device_warmup_generation_(0),
       proxy_authentication_(false),
       channels_enabled_(false),
       channels_(0),
@@ -172,6 +192,7 @@ GstEnginePipeline::GstEnginePipeline(QObject *parent)
       next_uri_set_(false),
       next_uri_need_reset_(false),
       next_uri_reset_(false),
+      next_uri_eos_manufactured_(false),
       volume_set_(false),
       volume_internal_(-1.0),
       volume_percent_(100),
@@ -198,10 +219,7 @@ GstEnginePipeline::GstEnginePipeline(QObject *parent)
       finish_requested_(false),
       finished_(false),
       bus_message_generation_(0),
-      set_state_in_progress_(0),
-      set_state_async_in_progress_(0),
-      last_set_state_in_progress_(GST_STATE_VOID_PENDING),
-      last_set_state_async_in_progress_(GST_STATE_VOID_PENDING) {
+      set_state_async_in_progress_(0) {
 
   guint version_major = 0, version_minor = 0;
   gst_plugins_base_version(&version_major, &version_minor, nullptr, nullptr);
@@ -222,7 +240,7 @@ GstEnginePipeline::GstEnginePipeline(QObject *parent)
 
 GstEnginePipeline::~GstEnginePipeline() {
 
-  Disconnect();
+  DisconnectCallbacks();
 
   if (pipeline_) {
 
@@ -243,7 +261,23 @@ GstEnginePipeline::~GstEnginePipeline() {
       }
     }
 
+    // Setting the pipeline to NULL flushes it, which releases any pad still blocked in a serialized event (e.g. a manufactured-EOS gst_pad_send_event() call from ErrorMessageReceived(), still running on a worker thread).
+    // This must happen with pipeline_ still referenced/valid but before we wait for those pad-send futures below, otherwise waitForFinished() could block forever: nothing else would ever unblock that pad.
     gst_element_set_state(pipeline_, GST_STATE_NULL);
+
+    // Now wait for any manufactured-EOS pad sends still running on a worker thread, since they act directly on audiobin_'s pad and must not race with tearing it down below.
+    {
+      QList<QFuture<gboolean>> futures_to_wait;
+      {
+        QMutexLocker locker(&mutex_pending_pad_send_events_);
+        futures_to_wait = pending_pad_send_events_;
+        pending_pad_send_events_.clear();
+      }
+
+      for (QFuture<gboolean> &future : futures_to_wait) {
+        future.waitForFinished();
+      }
+    }
 
     GstElement *audiobin = nullptr;
     g_object_get(GST_OBJECT(pipeline_), "audio-sink", &audiobin, nullptr);
@@ -328,6 +362,10 @@ void GstEnginePipeline::set_buffer_high_watermark(const double value) {
   buffer_high_watermark_ = value;
 }
 
+void GstEnginePipeline::set_device_warmup_duration_ms(const int duration_ms) {
+  device_warmup_duration_ms_ = duration_ms;
+}
+
 void GstEnginePipeline::set_proxy_settings(const QString &address, const bool authentication, const QString &user, const QString &pass) {
 
   QMutexLocker l(&mutex_proxy_);
@@ -397,7 +435,7 @@ GstElement *GstEnginePipeline::CreateElement(const QString &factory_name, const 
 
 }
 
-void GstEnginePipeline::Disconnect() {
+void GstEnginePipeline::DisconnectCallbacks() {
 
   if (pipeline_) {
 
@@ -488,30 +526,16 @@ bool GstEnginePipeline::Finish() {
 
   finish_requested_ = true;
 
-  Disconnect();
+  DisconnectCallbacks();
 
-  // Snapshot the state-progress group consistently so the branches below all act on the same view.
-  int async_in_progress = 0;
-  int sync_in_progress = 0;
-  GstState last_async = GST_STATE_VOID_PENDING;
-  GstState last_sync = GST_STATE_VOID_PENDING;
-  {
-    QMutexLocker locker(&mutex_state_progress_);
-    async_in_progress = set_state_async_in_progress_.load();
-    sync_in_progress = set_state_in_progress_.load();
-    last_async = last_set_state_async_in_progress_.load();
-    last_sync = last_set_state_in_progress_.load();
-  }
-
-  const bool is_null = IsStateNull();
-  if (is_null && async_in_progress == 0 && sync_in_progress == 0) {
+  if (IsStateNull() && !StateChangeInProgress()) {
+    // Already stopped and nothing in flight, so we are done immediately.
     finished_ = true;
   }
-  else if (async_in_progress > 0 && last_async != GST_STATE_NULL) {
+  else {
+    // Drive the pipeline to NULL without blocking; SetStateFinishedSlot() emits Finished() once it settles.
+    // Routing through the async queue orders this NULL request after any state change already queued, and SetStateAsyncSlot() drops those queued non-NULL requests now that finishing has been requested.
     SetStateAsync(GST_STATE_NULL);
-  }
-  else if ((!is_null || sync_in_progress > 0) && last_sync != GST_STATE_NULL) {
-    SetState(GST_STATE_NULL);
   }
 
   return finished_.load();
@@ -1155,6 +1179,8 @@ void GstEnginePipeline::SourceSetupCallback(GstElement *playbin, GstElement *sou
 
   GstEnginePipeline *instance = reinterpret_cast<GstEnginePipeline*>(self);
 
+  qLog(Debug) << "Pipeline" << instance->id() << "source-setup, source element is" << G_OBJECT_TYPE_NAME(source);
+
   {
     QMutexLocker l(&instance->mutex_source_device_);
     if (g_object_class_find_property(G_OBJECT_GET_CLASS(source), "device") && !instance->source_device().isEmpty()) {
@@ -1174,6 +1200,11 @@ void GstEnginePipeline::SourceSetupCallback(GstElement *playbin, GstElement *sou
   if (g_object_class_find_property(G_OBJECT_GET_CLASS(source), "ssl-strict")) {
     qLog(Debug) << "Turning" << (instance->strict_ssl_enabled_.load() ? "on" : "off") << "strict SSL";
     g_object_set(source, "ssl-strict", instance->strict_ssl_enabled_.load() ? TRUE : FALSE, nullptr);
+  }
+
+  if (g_object_class_find_property(G_OBJECT_GET_CLASS(source), "automatic-redirect")) {
+    qLog(Debug) << "Enabling automatic redirect";
+    g_object_set(source, "automatic-redirect", TRUE, nullptr);
   }
 
   {
@@ -1334,6 +1365,54 @@ GstPadProbeReturn GstEnginePipeline::PadProbeCallback(GstPad *pad, GstPadProbeIn
 
 }
 
+namespace {
+
+// Reads uniformly-strided PCM samples from a mapped GstBuffer, converts each to int16_t via convert_sample, and returns a new int16 GstBuffer with matching duration (or nullptr if the buffer could not be mapped, or is too large to represent in the int-based sizes used below and by the GstBuffer/g_malloc APIs).
+// The loop below writes every element of the returned buffer unconditionally, so callers don't need to zero-fill it first.
+// Only suitable for formats where every SourceSampleT-sized slot is directly one sample (S24LE-style packed/sub-word formats need their own bespoke reader with early-exit boundary handling).
+// Callers must ensure channels > 0 (it's used as a divisor and multiplier below).
+template <typename SourceSampleType, typename ConvertFn>
+GstBuffer *ConvertSamplesToInt16(GstBuffer *buf, const int channels, const int rate, ConvertFn convert_sample) {
+
+  if (channels <= 0 || rate <= 0) {
+    return nullptr;
+  }
+
+  GstMapInfo map_info;
+  if (!gst_buffer_map(buf, &map_info, GST_MAP_READ)) {
+    return nullptr;
+  }
+
+  // Compute in gsize (unsigned, at least 64-bit) first: samples/buf16_size are narrowed to int below (required by g_malloc()'s gsize parameter being used as a signed size and by the int-based loop), and an abnormally large or malformed buffer must not be allowed to silently overflow/truncate that signed int arithmetic into an undersized allocation with an out-of-bounds write.
+  const gsize total_samples = (map_info.size / sizeof(SourceSampleType)) / static_cast<gsize>(channels);
+  const gsize buf16_size_unsigned = total_samples * static_cast<gsize>(channels) * sizeof(int16_t);
+  if (total_samples > static_cast<gsize>(std::numeric_limits<int>::max()) || buf16_size_unsigned > static_cast<gsize>(std::numeric_limits<int>::max())) {
+    gst_buffer_unmap(buf, &map_info);
+    return nullptr;
+  }
+
+  const int samples = static_cast<int>(total_samples);
+  const int buf16_size = static_cast<int>(buf16_size_unsigned);
+  int16_t *d = static_cast<int16_t*>(g_malloc(static_cast<gsize>(buf16_size)));
+
+  for (int i = 0; i < (samples * channels); ++i) {
+    // Read via memcpy rather than a typed reinterpret_cast: map_info.data is not guaranteed to be aligned to sizeof(SourceSampleType).
+    SourceSampleType sample_value = 0;
+    memcpy(&sample_value, map_info.data + (static_cast<size_t>(i) * sizeof(SourceSampleType)), sizeof(SourceSampleType));
+    d[i] = convert_sample(sample_value);
+  }
+
+  gst_buffer_unmap(buf, &map_info);
+
+  GstBuffer *buf16 = gst_buffer_new_wrapped(d, static_cast<gsize>(buf16_size));
+  GST_BUFFER_DURATION(buf16) = GST_FRAMES_TO_CLOCK_TIME(static_cast<guint64>(samples), static_cast<guint64>(rate));
+
+  return buf16;
+
+}
+
+}  // namespace
+
 GstPadProbeReturn GstEnginePipeline::BufferProbeCallback(GstPad *pad, GstPadProbeInfo *info, gpointer self) {
 
   GstEnginePipeline *instance = reinterpret_cast<GstEnginePipeline*>(self);
@@ -1359,6 +1438,10 @@ GstPadProbeReturn GstEnginePipeline::BufferProbeCallback(GstPad *pad, GstPadProb
   }
   GstBuffer *buf16 = nullptr;
 
+  // Format label actually forwarded to consumers below: it starts as the caps format, but is corrected to "S16LE" whenever a conversion branch below actually replaces buf with a genuine int16 buffer.
+  // Consumers (e.g. GstEngine::UpdateScope) rely on this label matching buf's real layout - if a conversion below fails (e.g. gst_buffer_map()), buf stays unconverted, so this must NOT be overwritten in that case.
+  QString analyzer_format = format;
+
   qint64 end_time = -1;
   const GstClockTime timestamp = GST_BUFFER_TIMESTAMP(buf);
   if (GST_CLOCK_TIME_IS_VALID(timestamp)) {
@@ -1370,46 +1453,14 @@ GstPadProbeReturn GstEnginePipeline::BufferProbeCallback(GstPad *pad, GstPadProb
     }
   }
 
-  if (format.startsWith("S16LE"_L1)) {
-    instance->logged_unsupported_analyzer_format_ = false;
-  }
-  else if (format.startsWith("S32LE"_L1)) {
-    GstMapInfo map_info;
-    if (gst_buffer_map(buf, &map_info, GST_MAP_READ)) {
-      int32_t *s = reinterpret_cast<int32_t*>(map_info.data);
-      int samples = static_cast<int>((map_info.size / sizeof(int32_t)) / channels);
-      int buf16_size = samples * static_cast<int>(sizeof(int16_t)) * channels;
-      int16_t *d = static_cast<int16_t*>(g_malloc(static_cast<gsize>(buf16_size)));
-      memset(d, 0, static_cast<size_t>(buf16_size));
-      for (int i = 0; i < (samples * channels); ++i) {
-        d[i] = static_cast<int16_t>((s[i] >> 16));
-      }
-      gst_buffer_unmap(buf, &map_info);
-      buf16 = gst_buffer_new_wrapped(d, static_cast<gsize>(buf16_size));
-      GST_BUFFER_DURATION(buf16) = GST_FRAMES_TO_CLOCK_TIME(static_cast<guint64>(samples), static_cast<guint64>(rate));
-      buf = buf16;
+  if (channels <= 0 || rate <= 0) {
+    // Missing/invalid caps (e.g. the pad hasn't negotiated yet, or malformed stream metadata): channels is used as a divisor below in every branch, and rate as a divisor inside GST_FRAMES_TO_CLOCK_TIME, so bail out here rather than risk a division by zero or a nonsense duration in every branch below.
+    if (!instance->logged_unsupported_analyzer_format_) {
+      instance->logged_unsupported_analyzer_format_ = true;
+      qLog(Error) << "Invalid channels or rate for the analyzer:" << channels << rate;
     }
-    instance->logged_unsupported_analyzer_format_ = false;
   }
-
-  else if (format.startsWith("F32LE"_L1)) {
-    GstMapInfo map_info;
-    if (gst_buffer_map(buf, &map_info, GST_MAP_READ)) {
-      float *s = reinterpret_cast<float*>(map_info.data);
-      int samples = static_cast<int>((map_info.size / sizeof(float)) / channels);
-      int buf16_size = samples * static_cast<int>(sizeof(int16_t)) * channels;
-      int16_t *d = static_cast<int16_t*>(g_malloc(static_cast<gsize>(buf16_size)));
-      memset(d, 0, static_cast<size_t>(buf16_size));
-      for (int i = 0; i < (samples * channels); ++i) {
-        // Clamp before casting - samples can exceed [-1.0, 1.0) (ReplayGain/intersample peaks, and this probe is pre-volume/pre-EQ), which would otherwise wrap on the int16 cast.
-        const float sample_float = qBound(-32768.0F, s[i] * 32768.0F, 32767.0F);
-        d[i] = static_cast<int16_t>(sample_float);
-      }
-      gst_buffer_unmap(buf, &map_info);
-      buf16 = gst_buffer_new_wrapped(d, static_cast<gsize>(buf16_size));
-      GST_BUFFER_DURATION(buf16) = GST_FRAMES_TO_CLOCK_TIME(static_cast<guint64>(samples), static_cast<guint64>(rate));
-      buf = buf16;
-    }
+  else if (format.startsWith("S16LE"_L1)) {
     instance->logged_unsupported_analyzer_format_ = false;
   }
   else if (format.startsWith("S24LE"_L1)) {
@@ -1431,6 +1482,7 @@ GstPadProbeReturn GstEnginePipeline::BufferProbeCallback(GstPad *pad, GstPadProb
       buf16 = gst_buffer_new_wrapped(s16, static_cast<gsize>(buf16_size));
       GST_BUFFER_DURATION(buf16) = GST_FRAMES_TO_CLOCK_TIME(static_cast<guint64>(samples), static_cast<guint64>(rate));
       buf = buf16;
+      analyzer_format = u"S16LE"_s;
     }
     instance->logged_unsupported_analyzer_format_ = false;
   }
@@ -1455,6 +1507,39 @@ GstPadProbeReturn GstEnginePipeline::BufferProbeCallback(GstPad *pad, GstPadProb
       buf16 = gst_buffer_new_wrapped(s16, static_cast<gsize>(buf16_size));
       GST_BUFFER_DURATION(buf16) = GST_FRAMES_TO_CLOCK_TIME(static_cast<guint64>(samples), static_cast<guint64>(rate));
       buf = buf16;
+      analyzer_format = u"S16LE"_s;
+    }
+    instance->logged_unsupported_analyzer_format_ = false;
+  }
+  else if (format.startsWith("S32LE"_L1)) {
+    if (GstBuffer *converted_buffer = ConvertSamplesToInt16<int32_t>(buf, channels, rate, [](const int32_t sample) {
+      return static_cast<int16_t>(sample >> 16);
+    })) {
+      buf16 = converted_buffer;
+      buf = buf16;
+      analyzer_format = u"S16LE"_s;
+    }
+    instance->logged_unsupported_analyzer_format_ = false;
+  }
+  else if (format.startsWith("F32LE"_L1)) {
+    if (GstBuffer *converted_buffer = ConvertSamplesToInt16<float>(buf, channels, rate, [](const float sample) {
+      // Clamp before casting - samples can exceed [-1.0, 1.0) (ReplayGain/intersample peaks, and this probe is pre-volume/pre-EQ), which would otherwise wrap on the int16 cast.
+      return static_cast<int16_t>(qBound(-32768.0F, sample * 32768.0F, 32767.0F));
+    })) {
+      buf16 = converted_buffer;
+      buf = buf16;
+      analyzer_format = u"S16LE"_s;
+    }
+    instance->logged_unsupported_analyzer_format_ = false;
+  }
+  else if (format.startsWith("F64LE"_L1)) {
+    if (GstBuffer *converted_buffer = ConvertSamplesToInt16<double>(buf, channels, rate, [](const double sample) {
+      // Clamp before casting - samples can exceed [-1.0, 1.0) (ReplayGain/intersample peaks, and this probe is pre-volume/pre-EQ), which would otherwise wrap on the int16 cast.
+      return static_cast<int16_t>(qBound(-32768.0, sample * 32768.0, 32767.0));
+    })) {
+      buf16 = converted_buffer;
+      buf = buf16;
+      analyzer_format = u"S16LE"_s;
     }
     instance->logged_unsupported_analyzer_format_ = false;
   }
@@ -1471,7 +1556,7 @@ GstPadProbeReturn GstEnginePipeline::BufferProbeCallback(GstPad *pad, GstPadProb
 
   for (GstBufferConsumer *consumer : std::as_const(consumers)) {
     gst_buffer_ref(buf);
-    consumer->ConsumeBuffer(buf, instance->id(), format);
+    consumer->ConsumeBuffer(buf, instance->id(), analyzer_format);
   }
 
   if (buf16) {
@@ -1546,7 +1631,7 @@ void GstEnginePipeline::AboutToFinishCallback(GstPlayBin *playbin, gpointer self
 // Watch callback and the single dispatch point for all message-driven state mutation in this class.
 // IMPORTANT: this only runs on the main thread when Qt drives the GLib default main context (i.e. the QEventDispatcherGlib build on Linux/Unix).
 // On Windows and macOS Qt uses a non-GLib event dispatcher, so Application starts a dedicated GLib thread (see Application::GLibMainLoopThreadFunc) that drives the default context instead, and this callback - and every handler it calls below - then runs on THAT thread, concurrently with the main thread.
-// Consequently every member touched here must stay safe against concurrent main-thread access (the state is mostly atomics/mutex-guarded), and the pipeline teardown in Disconnect() can race an in-flight dispatch on that thread.
+// Consequently every member touched here must stay safe against concurrent main-thread access (the state is mostly atomics/mutex-guarded), and the pipeline teardown in DisconnectCallbacks() can race an in-flight dispatch on that thread.
 gboolean GstEnginePipeline::BusWatchCallback(GstBus *bus, GstMessage *msg, gpointer self) {
 
   Q_UNUSED(bus)
@@ -1722,13 +1807,6 @@ void GstEnginePipeline::ElementMessageReceived(GstMessage *msg) {
     g_free(detail);
     Q_EMIT Error(id(), static_cast<int>(GST_LIBRARY_ERROR), GST_CORE_ERROR_MISSING_PLUGIN, message, QString());
   }
-  else if (gst_structure_has_name(structure, "redirect")) {
-    const char *uri = gst_structure_get_string(structure, "new-location");
-
-    // Set the redirect URL.  In mmssrc redirect messages come during the initial state change to PLAYING, so callers can pick up this URL after the state change has failed.
-    QMutexLocker l(&mutex_redirect_url_);
-    redirect_url_ = uri;
-  }
 
 }
 
@@ -1752,27 +1830,34 @@ void GstEnginePipeline::ErrorMessageReceived(GstMessage *msg) {
 
   if (pipeline_active_.load() && next_uri_set_.load() && (domain == GST_CORE_ERROR || domain == GST_RESOURCE_ERROR || domain == GST_STREAM_ERROR)) {
     // A track is still playing and the next uri is not playable. We ignore the error here so it can play until the end.
-    // But there is no message send to the bus when the current track finishes, we have to add an EOS ourself.
+    // But there is no message sent to the bus when the current track finishes, we have to add an EOS ourself.
+    // gst_pad_send_event() is a serialized event: sending it to audiobin_'s entrance pad queues it behind whatever of the current track's audio is already buffered downstream of that point, so it only reaches the sink (and surfaces as a real GST_MESSAGE_EOS, handled below) once that buffered audio has actually finished playing,
+    // which is what makes the current track play out to its natural end instead of being cut short.
+    // The call itself blocks the caller on that pad's stream lock for as long as that takes.
+    // Doing this on the main thread would freeze the UI for the remainder of the track,
+    // or deadlock it outright if the sink is also stalled waiting on a state change that can only be observed on the main thread.
+    // So it is dispatched on shared_pad_send_threadpool(), a pool kept separate from shared_state_threadpool() (used by SetState() below) so a long-blocked pad send can never starve state-change requests.
+    // Repeated error messages can arrive for the same failed next-URI (e.g. from multiple internal elements), but only the first should manufacture an EOS; the guard is reset per next-URI cycle in SetNextUrl().
+    bool expected = false;
+    if (!next_uri_eos_manufactured_.compare_exchange_strong(expected, true)) {
+      return;
+    }
     qLog(Info) << "Ignoring error" << domain << code << message << debugstr << "when loading next track";
     GstPad *pad = gst_element_get_static_pad(audiobin_, "sink");
     if (pad) {
-      gst_pad_send_event(pad, gst_event_new_eos());
-      gst_object_unref(pad);
+      QFuture<gboolean> future = QtConcurrent::run(shared_pad_send_threadpool(), [pad]() {
+        const gboolean result = gst_pad_send_event(pad, gst_event_new_eos());
+        gst_object_unref(pad);
+        return result;
+      });
+      QMutexLocker locker(&mutex_pending_pad_send_events_);
+      pending_pad_send_events_.append(future);
     }
     return;
   }
 
   qLog(Error) << __FUNCTION__ << "ID:" << id() << "Domain:" << domain << "Code:" << code << "Error:" << message;
   qLog(Error) << __FUNCTION__ << "ID:" << id() << "Domain:" << domain << "Code:" << code << "Debug:" << debugstr;
-
-  {
-    QMutexLocker l(&mutex_redirect_url_);
-    if (!redirect_url_.isEmpty() && debugstr.contains("A redirect message was posted on the bus and should have been handled by the application."_L1)) {
-      // mmssrc posts a message on the bus *and* makes an error message when it wants to do a redirect.
-      // We handle the message, but now we have to ignore the error too.
-      return;
-    }
-  }
 
 #ifdef Q_OS_WIN32
   // Ignore non-error received for directsoundsink: "IDirectSoundBuffer_GetStatus The operation completed successfully"
@@ -1900,6 +1985,13 @@ void GstEnginePipeline::StateChangedMessageReceived(GstMessage *msg) {
     SetVolume(volume_percent_.load());
   }
 
+  // Warm-up delay for a fresh start without an offset: the pipeline has prerolled (the audio device is now open), so wait before starting playback to let the device (DAC) become ready, then go to PLAYING.
+  // (The offset/seek start applies the same delay from Seek() once the seek completes.)
+  if (new_state == GST_STATE_PAUSED && device_warmup_pending_.exchange(false)) {
+    StartPlaybackAfterWarmup();
+    return;
+  }
+
   if (next_uri_set_.load() && next_uri_need_reset_.load() && new_state == GST_STATE_READY && pending_seek_nanosec_.load() != -1) {
     qLog(Debug) << "Reverting next uri and going to pause state.";
     next_uri_set_ = false;
@@ -1923,10 +2015,11 @@ void GstEnginePipeline::StateChangedMessageReceived(GstMessage *msg) {
         SetStateAsync(requested_state);
       }
     }
-    if (fader_ && fader_active_.load() && !fader_running_.load() && new_state == GST_STATE_PLAYING) {
-      qLog(Debug) << "Resuming fader";
-      ResumeFaderAsync();
-    }
+  }
+
+  if (pipeline_active_.load() && fader_ && fader_active_.load() && !fader_running_.load() && new_state == GST_STATE_PLAYING) {
+    qLog(Debug) <<  "Pipeline" << id() << "Resuming fader";
+    ResumeFaderAsync();
   }
 
 }
@@ -2028,13 +2121,23 @@ bool GstEnginePipeline::IsStateNull() const {
 
 }
 
+bool GstEnginePipeline::StateChangeInProgress() {
+
+  // A request queued via SetStateAsync() but not yet running still counts as in progress.
+  if (set_state_async_in_progress_.load() > 0) return true;
+
+  QMutexLocker locker(&mutex_pending_state_changes_);
+  for (const QFuture<GstStateChangeReturn> &future : std::as_const(pending_state_changes_)) {
+    if (!future.isFinished()) return true;
+  }
+  return false;
+
+}
+
 void GstEnginePipeline::SetStateAsync(const GstState state) {
 
-  {
-    QMutexLocker locker(&mutex_state_progress_);
-    last_set_state_async_in_progress_ = state;
-    ++set_state_async_in_progress_;
-  }
+  // Count the request as in progress before it is queued (this may run on a GStreamer streaming thread) so it stays visible until SetStateAsyncSlot() hands it off to a pending future.
+  ++set_state_async_in_progress_;
 
   QMetaObject::invokeMethod(this, "SetStateAsyncSlot", Qt::QueuedConnection, Q_ARG(GstState, state));
 
@@ -2042,10 +2145,13 @@ void GstEnginePipeline::SetStateAsync(const GstState state) {
 
 void GstEnginePipeline::SetStateAsyncSlot(const GstState state) {
 
-  {
-    QMutexLocker locker(&mutex_state_progress_);
-    last_set_state_async_in_progress_ = GST_STATE_VOID_PENDING;
-    --set_state_async_in_progress_;
+  --set_state_async_in_progress_;
+
+  // Once finishing has been requested, drop any queued request that would move the pipeline away from NULL (e.g. a PLAYING queued from about-to-finish just before shutdown), otherwise it could be resurrected after Finish() asked it to stop.
+  if (finish_requested_.load() && state != GST_STATE_NULL) {
+    // Dropping this request may have removed the last thing keeping the pipeline non-quiescent (the NULL transition may already have completed earlier), so release any Finish() waiters here as well.
+    EmitFinishedIfQuiescent();
+    return;
   }
 
   SetState(state);
@@ -2056,13 +2162,10 @@ QFuture<GstStateChangeReturn> GstEnginePipeline::SetState(const GstState state) 
 
   qLog(Debug) << "Setting pipeline" << id() << "state to" << GstStateText(state);
 
-  {
-    QMutexLocker locker(&mutex_state_progress_);
-    last_set_state_in_progress_ = state;
-    ++set_state_in_progress_;
-  }
+  // Every explicit transition invalidates any warm-up timer waiting to resume playback, so a stale timer cannot override a newer pause/stop/start.
+  ++device_warmup_generation_;
 
-  QFutureWatcher<GstStateChangeReturn> *watcher = new QFutureWatcher<GstStateChangeReturn>();
+  QFutureWatcher<GstStateChangeReturn> *watcher = new QFutureWatcher<GstStateChangeReturn>(this);
   QObject::connect(watcher, &QFutureWatcher<GstStateChangeReturn>::finished, this, [this, watcher, state]() {
     const GstStateChangeReturn state_change_return = watcher->result();
     watcher->deleteLater();
@@ -2071,7 +2174,7 @@ QFuture<GstStateChangeReturn> GstEnginePipeline::SetState(const GstState state) 
   QFuture<GstStateChangeReturn> future = QtConcurrent::run(shared_state_threadpool(), &gst_element_set_state, pipeline_, state);
   watcher->setFuture(future);
 
-  // Track this future so destructor can wait for it
+  // Track this future so the destructor can wait for it and so it counts as a state change in progress.
   {
     QMutexLocker locker(&mutex_pending_state_changes_);
     pending_state_changes_.append(future);
@@ -2083,16 +2186,8 @@ QFuture<GstStateChangeReturn> GstEnginePipeline::SetState(const GstState state) 
 
 void GstEnginePipeline::SetStateFinishedSlot(const GstState state, const GstStateChangeReturn state_change_return) {
 
-  bool quiescent = false;
   {
-    QMutexLocker locker(&mutex_state_progress_);
-    last_set_state_in_progress_ = GST_STATE_VOID_PENDING;
-    --set_state_in_progress_;
-    quiescent = (set_state_async_in_progress_.load() == 0 && set_state_in_progress_.load() == 0);
-  }
-
-  // Remove finished futures from tracking list to prevent unbounded growth
-  {
+    // Drop finished futures (including this one) to keep the list bounded.
     QMutexLocker locker(&mutex_pending_state_changes_);
     pending_state_changes_.erase(std::remove_if(pending_state_changes_.begin(), pending_state_changes_.end(), [](const QFuture<GstStateChangeReturn> &f) { return f.isFinished(); }), pending_state_changes_.end());
   }
@@ -2103,16 +2198,32 @@ void GstEnginePipeline::SetStateFinishedSlot(const GstState state, const GstStat
     case GST_STATE_CHANGE_NO_PREROLL:
       qLog(Debug) << "Pipeline" << id() << "state successfully set to" << GstStateText(state);
       Q_EMIT SetStateFinished(state_change_return);
-      if (quiescent && finish_requested_.load()) {
-        bool expected = false;
-        if (finished_.compare_exchange_strong(expected, true)) {
-          Q_EMIT Finished();
-        }
-      }
       break;
     case GST_STATE_CHANGE_FAILURE:
       qLog(Error) << "Failed to set pipeline to state" << GstStateText(state);
       break;
+  }
+
+  // Release Finish() waiters once nothing is left in flight, whether the transition succeeded or failed, otherwise the pipeline would never be reclaimed during shutdown.
+  EmitFinishedIfQuiescent();
+
+}
+
+void GstEnginePipeline::EmitFinishedIfQuiescent() {
+
+  // Emit Finished() exactly once, when finishing has been requested and there is nothing left in flight (no queued async requests and no running state changes), so Finish() waiters are always released regardless of whether the final step was a completed NULL transition or a dropped resurrecting request.
+  if (!finish_requested_.load()) return;
+
+  bool quiescent = false;
+  {
+    QMutexLocker locker(&mutex_pending_state_changes_);
+    quiescent = pending_state_changes_.isEmpty() && set_state_async_in_progress_.load() == 0;
+  }
+  if (!quiescent) return;
+
+  bool expected = false;
+  if (finished_.compare_exchange_strong(expected, true)) {
+    Q_EMIT Finished();
   }
 
 }
@@ -2120,14 +2231,53 @@ void GstEnginePipeline::SetStateFinishedSlot(const GstState state, const GstStat
 QFuture<GstStateChangeReturn> GstEnginePipeline::Play(const bool pause, const quint64 offset_nanosec) {
 
   if (offset_nanosec != 0) {
+    // Preroll paused so we can seek to the offset while the pipeline is prerolling, then transition to the requested state once the seek completes (pending_state_ carries it).
     pending_seek_nanosec_ = static_cast<qint64>(offset_nanosec);
+    if (!pause) {
+      pending_state_ = GST_STATE_PLAYING;
+    }
+    return SetState(GST_STATE_PAUSED);
   }
 
-  if (!pause) {
-    pending_state_ = GST_STATE_PLAYING;
+  if (!pause && device_warmup_duration_ms_ > 0) {
+    // Preroll to PAUSED first, then wait device_warmup_duration_ms_ before going to PLAYING (handled in StateChangedMessageReceived once PAUSED is reached).
+    // This gives the audio device (DAC) time to become ready after it is opened during preroll, so the start of the track is not cut off while the hardware is still warming up.
+    device_warmup_pending_ = true;
+    return SetState(GST_STATE_PAUSED);
   }
 
-  return SetState(GST_STATE_PAUSED);
+  // No offset and no warm-up: go straight to the requested state.
+  // playbin prerolls (opens the audio device and fills buffers) during READY->PAUSED regardless of whether PAUSED or PLAYING is requested, so an explicit PAUSED->PLAYING hop on its own changes nothing.
+  return SetState(pause ? GST_STATE_PAUSED : GST_STATE_PLAYING);
+
+}
+
+void GstEnginePipeline::StartPlaybackAfterWarmup() {
+
+  // Nothing to do if the pipeline is already playing.
+  if (state() == GST_STATE_PLAYING) return;
+
+  // The pipeline has prerolled and the audio device is open; wait for the configured warm-up delay (if any) so the device (DAC) has time to become ready before playback starts, then transition to PLAYING.
+  if (device_warmup_duration_ms_ > 0) {
+    qLog(Debug) << "Waiting" << device_warmup_duration_ms_ << "ms for the audio device to warm up before playing";
+    const quint64 device_warmup_generation = device_warmup_generation_.load();
+    QTimer::singleShot(device_warmup_duration_ms_, this, [this, device_warmup_generation]() {
+      // Only resume if no newer transition happened while we were waiting (e.g. the user paused/stopped or a newer start superseded this one)...
+      if (device_warmup_generation != device_warmup_generation_.load()) {
+        qLog(Debug) << "Warm-up delay elapsed but a newer state change superseded it, not starting playback";
+        return;
+      }
+      // ...and the pipeline is still paused (it was not stopped and did not otherwise leave the prerolled state).
+      if (state() != GST_STATE_PAUSED) {
+        qLog(Debug) << "Warm-up delay elapsed but pipeline is" << GstStateText(state()) << "not paused, not starting playback";
+        return;
+      }
+      SetStateAsync(GST_STATE_PLAYING);
+    });
+  }
+  else {
+    SetStateAsync(GST_STATE_PLAYING);
+  }
 
 }
 
@@ -2164,10 +2314,14 @@ bool GstEnginePipeline::Seek(const qint64 nanosec) {
 
   if (success) {
     qLog(Debug) << "Seek succeeded";
-    if (pending_state_.load() != GST_STATE_NULL) {
-      qLog(Debug) << "Setting state from pending state" << GstStateText(pending_state_.load());
-      SetState(pending_state_.load());
-      pending_state_ = GST_STATE_NULL;
+    const GstState state = pending_state_.exchange(GST_STATE_NULL);
+    if (state == GST_STATE_PLAYING) {
+      // Starting playback from an offset (saved position or CUE-sheet start): the device was opened during preroll, so honour the warm-up delay here too before going to PLAYING.
+      StartPlaybackAfterWarmup();
+    }
+    else if (state != GST_STATE_NULL) {
+      qLog(Debug) << "Setting state from pending state" << GstStateText(state);
+      SetState(state);
     }
   }
 
@@ -2415,12 +2569,15 @@ void GstEnginePipeline::SetFaderVolume(const qreal volume) {
 void GstEnginePipeline::ResumeFaderAsync() {
 
   if (fader_ && fader_active_.load() && !fader_running_.load()) {
+    QMetaObject::invokeMethod(timer_fader_timeout_, qOverload<>(&QTimer::start), Qt::QueuedConnection);
     QMetaObject::invokeMethod(&*fader_, &QTimeLine::resume, Qt::QueuedConnection);
   }
 
 }
 
 void GstEnginePipeline::FaderTimelineStateChanged(const QTimeLine::State state) {
+
+  qLog(Debug) << "Pipeline" << id() << "fader state changed to" << (state == QTimeLine::State::Running ? "running" : state == QTimeLine::State::Paused ? "paused" : "not running");
 
   fader_running_ = state == QTimeLine::State::Running;
 
@@ -2502,6 +2659,9 @@ void GstEnginePipeline::SetNextUrl() {
 
   bool expected = false;
   if (!next_uri_set_.compare_exchange_strong(expected, true)) return;
+
+  // Starting a new next-URI cycle: allow ErrorMessageReceived() to manufacture (at most) one more EOS if this next URI also fails.
+  next_uri_eos_manufactured_ = false;
 
   // Set the next uri. When the current song ends it will be played automatically and a STREAM_START message is send to the bus.
   // When the next uri is not playable an error message is send when the pipeline goes to PLAY (or PAUSE) state or immediately if it is currently in PLAY state.

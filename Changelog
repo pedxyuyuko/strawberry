@@ -2,6 +2,83 @@ Strawberry Music Player
 =======================
 ChangeLog
 
+Version 1.2.26 (2026.07.30):
+
+  Bugfixes:
+    * Fixed re-loading playlist item metadata for local files not in the collection after editing tags (#2257)
+
+  Enhancements:
+    * Replaced deprecated QLibraryInfo::path with QLibraryInfo::paths
+    * Removed dedicated network access manager for lyrics
+    * Refactor the playlist items save/reload code
+    * Refactor the translation loading code
+
+Version 1.2.25 (2026.07.25):
+
+  Bugfixes:
+    * Fixed a possible deadlock during gapless track transition when an error occurs loading the next track (#2251)
+    * Fixed the wrong embedded cover being picked for FLAC/Ogg files with multiple untagged ("Other") pictures (#2250)
+    * Fixed tag edits made in the playlist not being reflected immediately, and restored the previous metadata if saving a tag edit fails (#2239)
+    * Fixed the taskbar/dock icon not matching the running window on some desktops (#2242)
+    * Numerous stability, crash-safety and thread-safety fixes throughout the application
+
+  Enhancements:
+    * Added recursive expansion of nested .m3u/.m3u8 playlist references so they load as a fully expanded, flat playlist (#2185)
+    * Added AppImage packaging
+
+Version 1.2.24 (2026.07.16):
+
+  Bugfixes:
+    * Fixed playback hanging with no error shown when trying to play a track whose file no longer exists on disk (#2232)
+    * Fixed the tag fetcher dialog showing a generic message instead of the actual error when a Musicbrainz/AcoustID lookup fails
+    * Hardened Chromaprinter decoding against malformed or oversized files and capped its in-memory PCM usage
+    * Fixed the context menu using the wrong item when invoked via keyboard in the playlist and smart playlists views (#2219)
+    * Fixed blurry star rating icons by enabling smooth pixmap scaling (#2220)
+    * Added F64LE (64-bit float) sample format support for the spectrum analyzer
+    * Numerous stability, crash-safety and thread-safety fixes throughout the application
+
+  Enhancements:
+    * Added more keyboard shortcuts for playlist navigation: jump to last/active playlist and close playlist (#2197)
+
+Version 1.2.23 (2026.07.09):
+
+  Bugfixes:
+    * Fixed disabled widgets not appearing greyed out when a custom color set is in use
+    * Fixed custom palette colors being selectable with the Breeze style, which doesn't support them
+    * Fixed tab order in appearance settings
+    * Fixed exclusive mode being selectable in backend settings when not supported by the current output
+    * Fixed the fader not resuming after being paused (#2204)
+    * Fixed metadata (title, artist, album) from a radio stream track carrying over to the next track when its own tags are empty
+    * Fixed a possible division by zero in the FHT spectrum analyzer
+    * Fixed notifications not working on macOS by replacing the deprecated NSUserNotification API with UserNotifications
+    * Fixed a possible hang on exit on macOS when a device lister was still running
+    * Fixed Windows System Media Transport Controls image and timeline handling (#2208)
+    * Numerous stability, crash-safety and thread-safety fixes throughout the application
+
+  Enhancements:
+    * Style changes under appearance settings are now applied immediately, without requiring a restart
+    * Added support for native dark mode on macOS and Windows
+    * Added support for sorting radio browser search results by clicking column headers (#2200)
+
+Version 1.2.22 (2026.07.05):
+
+  Bugfixes:
+    * Fixed editing tags for files on GVFS mounts (SMB, SFTP, MTP) by editing a local temporary copy (#1696)
+    * Fixed the seekbar treating the mouse as still pressed when playback is stopped while seeking (#2075)
+    * Fixed the beginning of songs being cut off while the audio device (DAC) is warming up with a new configurable device warm-up delay (default 500 ms)
+    * Fixed empty available icon size handling for scalable (SVG) icons (#2171)
+    * Fixed Musixmatch lyrics search
+    * Removed logging of access tokens
+    * Numerous stability, crash-safety and thread-safety fixes throughout the application
+
+  Enhancements:
+    * All central palette color roles are now configurable under appearance settings, with a dark mode preset (#2063)
+    * Added System Media Transport Controls support on Windows (#1923)
+    * Simplified GStreamer pipeline state handling and teardown, playback now starts directly without an intermediate pause
+    * Turned on Subsonic certificate verification by default
+    * Apply a default transfer timeout to network requests
+    * Removed Last.fm import (#1936)
+
 Version 1.2.21 (2026.06.27):
 
     * Re-point playlist items that references duplicated songs before removal (#2168)

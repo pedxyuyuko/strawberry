@@ -51,7 +51,7 @@ class PlaylistBackend : public QObject {
                                        QObject *parent = nullptr);
 
   struct Playlist {
-    Playlist() : id(-1), favorite(false), last_played(0) {}
+    Playlist() : id(-1), favorite(false), last_played(0), dynamic_type(PlaylistGenerator::Type::None) {}
 
     int id;
     QString name;
@@ -99,8 +99,9 @@ class PlaylistBackend : public QObject {
   };
 
   static QString PlaylistItemsQuery();
-  Song NewSongFromQuery(const SqlRow &row, SharedPtr<NewSongFromQueryState> state);
   PlaylistItemPtr NewPlaylistItemFromQuery(const SqlRow &row, SharedPtr<NewSongFromQueryState> state);
+  Song NewSongFromQuery(const SqlRow &row, SharedPtr<NewSongFromQueryState> state);
+  Song ReloadPlaylistItem(PlaylistItemPtr item) const;
   PlaylistItemPtr RestoreCueData(PlaylistItemPtr item, SharedPtr<NewSongFromQueryState> state);
 
   enum GetPlaylistsFlags {

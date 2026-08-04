@@ -103,16 +103,16 @@
 #include "core/deletefiles.h"
 #include "core/settings.h"
 #include "core/player.h"
+#include "core/appearance.h"
 #include "utilities/envutils.h"
 #include "utilities/filemanagerutils.h"
 #include "utilities/screenutils.h"
 #include "engine/enginebase.h"
 #include "dialogs/errordialog.h"
-#include "dialogs/about.h"
+#include "dialogs/aboutdialog.h"
 #include "dialogs/console.h"
 #include "dialogs/addstreamdialog.h"
 #include "dialogs/deleteconfirmationdialog.h"
-#include "dialogs/lastfmimportdialog.h"
 #include "dialogs/messagedialog.h"
 #include "dialogs/edittagdialog.h"
 #include "dialogs/trackselectiondialog.h"
@@ -198,10 +198,9 @@
 #include "radios/radiobrowsersearchview.h"
 
 #include "scrobbler/audioscrobbler.h"
-#include "scrobbler/lastfmimport.h"
 
-#ifdef HAVE_MUSICBRAINZ
-#  include "musicbrainz/tagfetcher.h"
+#ifdef HAVE_TAGFETCHER
+#  include "tagfetcher/tagfetcher.h"
 #endif
 
 #ifdef HAVE_MOODBAR
@@ -300,6 +299,7 @@ MainWindow::MainWindow(Application *app,
                        DiscordRichPresence *discord_rich_presence,
 #endif
                        const CommandlineOptions &options,
+                       const QString &default_style,
                        QWidget *parent)
     : QMainWindow(parent),
       ui_(new Ui_MainWindow),
@@ -310,6 +310,7 @@ MainWindow::MainWindow(Application *app,
       smtc_(new WinSystemMediaTransportControls(app->player(), this)),
 #endif
       app_(app),
+      appearance_(make_shared<Appearance>()),
       systemtrayicon_(systemtrayicon),
       osd_(osd),
 #ifdef HAVE_DISCORD_RPC
@@ -377,7 +378,6 @@ MainWindow::MainWindow(Application *app,
       qobuz_view_(new StreamingTabsView(app->streaming_services()->ServiceBySource(Song::Source::Qobuz), app->albumcover_loader(), QLatin1String(QobuzSettings::kSettingsGroup), this)),
 #endif
       radio_view_(new RadioViewContainer(this)),
-      lastfm_import_dialog_(new LastFMImportDialog(app_->lastfm_import(), this)),
       collection_show_all_(nullptr),
       collection_show_duplicates_(nullptr),
       collection_show_untagged_(nullptr),
@@ -570,7 +570,6 @@ MainWindow::MainWindow(Application *app,
   ui_->action_full_collection_scan->setIcon(IconLoader::Load(u"view-refresh"_s));
   ui_->action_stop_collection_scan->setIcon(IconLoader::Load(u"dialog-error"_s));
   ui_->action_settings->setIcon(IconLoader::Load(u"configure"_s));
-  ui_->action_import_data_from_last_fm->setIcon(IconLoader::Load(u"scrobble"_s));
   ui_->action_console->setIcon(IconLoader::Load(u"keyboard"_s));
   ui_->action_toggle_show_sidebar->setIcon(IconLoader::Load(u"view-choose"_s));
   ui_->action_auto_complete_tags->setIcon(IconLoader::Load(u"musicbrainz"_s));
@@ -606,11 +605,10 @@ MainWindow::MainWindow(Application *app,
   QObject::connect(ui_->action_renumber_tracks, &QAction::triggered, this, &MainWindow::RenumberTracks);
   QObject::connect(ui_->action_selection_set_value, &QAction::triggered, this, &MainWindow::SelectionSetValue);
   QObject::connect(ui_->action_edit_value, &QAction::triggered, this, &MainWindow::EditValue);
-#ifdef HAVE_MUSICBRAINZ
+#ifdef HAVE_TAGFETCHER
   QObject::connect(ui_->action_auto_complete_tags, &QAction::triggered, this, &MainWindow::AutoCompleteTags);
 #endif
   QObject::connect(ui_->action_settings, &QAction::triggered, this, &MainWindow::OpenSettingsDialog);
-  QObject::connect(ui_->action_import_data_from_last_fm, &QAction::triggered, lastfm_import_dialog_, &LastFMImportDialog::show);
   QObject::connect(ui_->action_toggle_show_sidebar, &QAction::toggled, this, &MainWindow::ToggleSidebar);
   QObject::connect(ui_->action_about_strawberry, &QAction::triggered, this, &MainWindow::ShowAboutDialog);
   QObject::connect(ui_->action_about_qt, &QAction::triggered, qApp, &QApplication::aboutQt);
@@ -637,10 +635,16 @@ MainWindow::MainWindow(Application *app,
   // Playlist view actions
   ui_->action_next_playlist->setShortcuts(QList<QKeySequence>() << QKeySequence::fromString(u"Ctrl+Tab"_s) << QKeySequence::fromString(u"Ctrl+PgDown"_s));
   ui_->action_previous_playlist->setShortcuts(QList<QKeySequence>() << QKeySequence::fromString(u"Ctrl+Shift+Tab"_s) << QKeySequence::fromString(u"Ctrl+PgUp"_s));
+  ui_->action_last_playlist->setShortcut(QKeySequence::fromString(u"Ctrl+9"_s));
+  ui_->action_active_playlist->setShortcut(QKeySequence::fromString(u"Ctrl+Shift+P"_s));
+  ui_->action_close_playlist->setShortcut(QKeySequence::fromString(u"Ctrl+W"_s));
 
   // Actions for switching tabs will be global to the entire window, so adding them here
   addAction(ui_->action_next_playlist);
   addAction(ui_->action_previous_playlist);
+  addAction(ui_->action_last_playlist);
+  addAction(ui_->action_active_playlist);
+  addAction(ui_->action_close_playlist);
 
   // Give actions to buttons
   ui_->forward_button->setDefaultAction(ui_->action_next_track);
@@ -650,7 +654,19 @@ MainWindow::MainWindow(Application *app,
   ui_->button_scrobble->setDefaultAction(ui_->action_toggle_scrobbling);
   ui_->button_love->setDefaultAction(ui_->action_love);
 
-  ui_->playlist->SetActions(ui_->action_new_playlist, ui_->action_load_playlist, ui_->action_save_playlist, ui_->action_clear_playlist, ui_->action_next_playlist, /* These two actions aren't associated */ ui_->action_previous_playlist /* to a button but to the main window */, ui_->action_save_all_playlists);
+  PlaylistContainer::Actions playlist_actions;
+  playlist_actions.new_playlist = ui_->action_new_playlist;
+  playlist_actions.load_playlist = ui_->action_load_playlist;
+  playlist_actions.save_playlist = ui_->action_save_playlist;
+  playlist_actions.clear_playlist = ui_->action_clear_playlist;
+  playlist_actions.next_playlist = ui_->action_next_playlist;
+  // These aren't associated to a button but to the main window
+  playlist_actions.previous_playlist = ui_->action_previous_playlist;
+  playlist_actions.last_playlist = ui_->action_last_playlist;
+  playlist_actions.active_playlist = ui_->action_active_playlist;
+  playlist_actions.close_playlist = ui_->action_close_playlist;
+  playlist_actions.save_all_playlists = ui_->action_save_all_playlists;
+  ui_->playlist->SetActions(playlist_actions);
   // Add the shuffle and repeat action groups to the menu
   ui_->action_shuffle_mode->setMenu(ui_->playlist_sequence->shuffle_menu());
   ui_->action_repeat_mode->setMenu(ui_->playlist_sequence->repeat_menu());
@@ -709,7 +725,7 @@ MainWindow::MainWindow(Application *app,
   QObject::connect(ui_->playlist->view(), &PlaylistView::doubleClicked, this, &MainWindow::PlaylistDoubleClick);
   QObject::connect(ui_->playlist->view(), &PlaylistView::PlayItem, this, &MainWindow::PlayIndex);
   QObject::connect(ui_->playlist->view(), &PlaylistView::PlayPause, &*app_->player(), &Player::PlayPause);
-  QObject::connect(ui_->playlist->view(), &PlaylistView::RightClicked, this, &MainWindow::PlaylistRightClick);
+  QObject::connect(ui_->playlist->view(), &PlaylistView::ShowPlaylistContextMenu, this, &MainWindow::ShowPlaylistContextMenu);
   QObject::connect(ui_->playlist->view(), &PlaylistView::SeekForward, &*app_->player(), &Player::SeekForward);
   QObject::connect(ui_->playlist->view(), &PlaylistView::SeekBackward, &*app_->player(), &Player::SeekBackward);
   QObject::connect(ui_->playlist->view(), &PlaylistView::BackgroundPropertyChanged, this, &MainWindow::RefreshStyleSheet);
@@ -855,7 +871,7 @@ MainWindow::MainWindow(Application *app,
   playlist_menu_->addAction(ui_->action_edit_value);
   playlist_menu_->addAction(ui_->action_renumber_tracks);
   playlist_menu_->addAction(ui_->action_selection_set_value);
-#ifdef HAVE_MUSICBRAINZ
+#ifdef HAVE_TAGFETCHER
   playlist_menu_->addAction(ui_->action_auto_complete_tags);
 #endif
   playlist_rescan_songs_ = playlist_menu_->addAction(IconLoader::Load(u"view-refresh"_s), tr("Rescan song(s)..."), this, &MainWindow::RescanSongs);
@@ -878,10 +894,6 @@ MainWindow::MainWindow(Application *app,
   playlist_menu_->addAction(ui_->action_shuffle);
   playlist_menu_->addAction(ui_->action_remove_duplicates);
   playlist_menu_->addAction(ui_->action_remove_unavailable);
-
-#ifdef Q_OS_MACOS
-  ui_->action_shuffle->setShortcut(QKeySequence());
-#endif
 
   // We have to add the actions on the playlist menu to this QWidget otherwise their shortcut keys don't work
   addActions(playlist_menu_->actions());
@@ -995,6 +1007,11 @@ MainWindow::MainWindow(Application *app,
   QObject::connect(ui_->action_console, &QAction::triggered, this, &MainWindow::ShowConsole);
   PlayingWidgetPositionChanged(ui_->widget_playing->show_above_status_bar());
 
+  // Load theme
+  // We need to save the default/system palette now, before loading user preferred theme (which will override it), to be able to restore it later
+  appearance_->set_default_style(default_style);
+  appearance_->set_system_palette(QApplication::palette());
+  appearance_->LoadCustomPaletteColors();
   StyleSheetLoader *css_loader = new StyleSheetLoader(this);
   css_loader->SetStyleSheet(this, u":/style/strawberry.css"_s);
 
@@ -1021,14 +1038,6 @@ MainWindow::MainWindow(Application *app,
   LoveButtonVisibilityChanged(app_->scrobbler()->love_button());
   ScrobblingEnabledChanged(app_->scrobbler()->enabled());
 
-  // Last.fm ImportData
-  QObject::connect(&*app_->lastfm_import(), &LastFMImport::Finished, lastfm_import_dialog_, &LastFMImportDialog::Finished);
-  QObject::connect(&*app_->lastfm_import(), &LastFMImport::FinishedWithError, lastfm_import_dialog_, &LastFMImportDialog::FinishedWithError);
-  QObject::connect(&*app_->lastfm_import(), &LastFMImport::UpdateTotal, lastfm_import_dialog_, &LastFMImportDialog::UpdateTotal);
-  QObject::connect(&*app_->lastfm_import(), &LastFMImport::UpdateProgress, lastfm_import_dialog_, &LastFMImportDialog::UpdateProgress);
-  QObject::connect(&*app_->lastfm_import(), &LastFMImport::UpdateLastPlayed, &*app_->collection_backend(), &CollectionBackend::UpdateLastPlayed);
-  QObject::connect(&*app_->lastfm_import(), &LastFMImport::UpdatePlayCount, &*app_->collection_backend(), &CollectionBackend::UpdatePlayCount);
-
 #if !defined(HAVE_AUDIOCD)
   ui_->action_open_cd->setEnabled(false);
   ui_->action_open_cd->setVisible(false);
@@ -1041,23 +1050,23 @@ MainWindow::MainWindow(Application *app,
 
   // Set last used geometry to position window on the correct monitor
   // Set window state only if the window was last maximized
-  if (settings.contains("geometry")) {
-    restoreGeometry(settings.value("geometry").toByteArray());
+  if (settings.contains(MainWindowSettings::kGeometry)) {
+    restoreGeometry(settings.value(MainWindowSettings::kGeometry).toByteArray());
   }
 
   if (!settings.contains(MainWindowSettings::kSplitterState) || !ui_->splitter->restoreState(settings.value(MainWindowSettings::kSplitterState).toByteArray())) {
     ui_->splitter->setSizes(QList<int>() << 20 << (width() - 20));
   }
 
-  ui_->tabs->setCurrentIndex(settings.value("current_tab", 1).toInt());
+  ui_->tabs->setCurrentIndex(settings.value(FancyTabWidget::kCurrentTab, 1).toInt());
   FancyTabWidget::Mode default_mode = FancyTabWidget::Mode::LargeSidebar;
-  FancyTabWidget::Mode tab_mode = static_cast<FancyTabWidget::Mode>(settings.value("tab_mode", static_cast<int>(default_mode)).toInt());
+  FancyTabWidget::Mode tab_mode = static_cast<FancyTabWidget::Mode>(settings.value(FancyTabWidget::kTabMode, static_cast<int>(default_mode)).toInt());
   if (tab_mode == FancyTabWidget::Mode::None) tab_mode = default_mode;
   ui_->tabs->SetMode(tab_mode);
 
   TabSwitched();
 
-  file_view_->SetPath(settings.value("file_path", QDir::homePath()).toString());
+  file_view_->SetPath(settings.value(MainWindowSettings::kFilePath, QDir::homePath()).toString());
 
   // Users often collapse one side of the splitter by mistake and don't know how to restore it. This must be set after the state is restored above.
   ui_->splitter->setChildrenCollapsible(false);
@@ -1077,7 +1086,7 @@ MainWindow::MainWindow(Application *app,
   {
     Settings s;
     s.beginGroup(BehaviourSettings::kSettingsGroup);
-    startupbehaviour = static_cast<BehaviourSettings::StartupBehaviour>(s.value(BehaviourSettings::kStartupBehaviour, static_cast<int>(BehaviourSettings::StartupBehaviour::Remember)).toInt());
+    startupbehaviour = static_cast<BehaviourSettings::StartupBehaviour>(s.value(BehaviourSettings::kStartupBehaviour, static_cast<int>(BehaviourSettings::kDefaultStartupBehaviour)).toInt());
     s.endGroup();
   }
   switch (startupbehaviour) {
@@ -1100,13 +1109,13 @@ MainWindow::MainWindow(Application *app,
     case BehaviourSettings::StartupBehaviour::Remember:
     default:{
 
-      was_maximized_ = settings.value(MainWindowSettings::kMaximized, true).toBool();
+      was_maximized_ = settings.value(MainWindowSettings::kMaximized, MainWindowSettings::kDefaultMaximized).toBool();
       if (was_maximized_) setWindowState(windowState() | Qt::WindowMaximized);
 
-      was_minimized_ = settings.value(MainWindowSettings::kMinimized, false).toBool();
+      was_minimized_ = settings.value(MainWindowSettings::kMinimized, MainWindowSettings::kDefaultMinimized).toBool();
       if (was_minimized_) setWindowState(windowState() | Qt::WindowMinimized);
 
-      if (!systemtrayicon_->IsSystemTrayAvailable() || !systemtrayicon_->isVisible() || !settings.value(MainWindowSettings::kHidden, false).toBool()) {
+      if (!systemtrayicon_->IsSystemTrayAvailable() || !systemtrayicon_->isVisible() || !settings.value(MainWindowSettings::kHidden, MainWindowSettings::kDefaultHidden).toBool()) {
         show();
       }
       break;
@@ -1114,13 +1123,16 @@ MainWindow::MainWindow(Application *app,
   }
 #endif
 
-  bool show_sidebar = settings.value(MainWindowSettings::kShowSidebar, true).toBool();
+  bool show_sidebar = settings.value(MainWindowSettings::kShowSidebar, MainWindowSettings::kDefaultShowSidebar).toBool();
   ui_->sidebar_layout->setVisible(show_sidebar);
   ui_->action_toggle_show_sidebar->setChecked(show_sidebar);
 
   QShortcut *close_window_shortcut = new QShortcut(this);
-  close_window_shortcut->setKey(Qt::CTRL | Qt::Key_W);
+  close_window_shortcut->setKey(Qt::CTRL | Qt::SHIFT | Qt::Key_W);
   QObject::connect(close_window_shortcut, &QShortcut::activated, this, &MainWindow::ToggleHide);
+
+  // Ctrl+W closes the current playlist tab, but falls back to hiding the window when there is only one tab left, matching the "close tab, or the window if it's the last one" convention used by tabbed browsers.
+  QObject::connect(ui_->playlist, &PlaylistContainer::LastTabCloseRequested, this, &MainWindow::ToggleHide);
 
   QAction *action_focus_search = new QAction(this);
   action_focus_search->setShortcuts(QList<QKeySequence>() << QKeySequence(u"Ctrl+F"_s));
@@ -1154,12 +1166,12 @@ MainWindow::MainWindow(Application *app,
   if (Utilities::ProcessTranslated()) {
     Settings s;
     s.beginGroup(MainWindowSettings::kSettingsGroup);
-    const bool ignore_rosetta = s.value("ignore_rosetta", false).toBool();
+    const bool ignore_rosetta = s.value(MainWindowSettings::kIgnoreRosetta, false).toBool();
     s.endGroup();
     if (!ignore_rosetta) {
       MessageDialog *rosetta_message = new MessageDialog(this);
       rosetta_message->set_settings_group(QLatin1String(MainWindowSettings::kSettingsGroup));
-      rosetta_message->set_do_not_show_message_again(u"ignore_rosetta"_s);
+      rosetta_message->set_do_not_show_message_again(QLatin1String(MainWindowSettings::kIgnoreRosetta));
       rosetta_message->setAttribute(Qt::WA_DeleteOnClose);
       rosetta_message->ShowMessage(tr("Strawberry running under Rosetta"), tr("You are running Strawberry under Rosetta. Running Strawberry under Rosetta is unsupported and known to have issues. You should download Strawberry for the correct CPU architecture from %1").arg(QLatin1String("<a href=\"https://downloads.strawberrymusicplayer.org/\">downloads.strawberrymusicplayer.org</a>")), IconLoader::Load(u"dialog-warning"_s));
     }
@@ -1171,12 +1183,12 @@ MainWindow::MainWindow(Application *app,
     Settings s;
 #ifdef HAVE_QTSPARKLE
     s.beginGroup("QtSparkle");
-    asked_permission = s.value("asked_permission", false).toBool();
+    asked_permission = s.value(MainWindowSettings::kAskedPermission, false).toBool();
     s.endGroup();
 #endif
     if (asked_permission) {
       s.beginGroup(MainWindowSettings::kSettingsGroup);
-      const bool do_not_show_sponsor_message = s.value(MainWindowSettings::kDoNotShowSponsorMessage, false).toBool();
+      const bool do_not_show_sponsor_message = s.value(MainWindowSettings::kDoNotShowSponsorMessage, MainWindowSettings::kDefaultDoNotShowSponsorMessage).toBool();
       s.endGroup();
       if (!do_not_show_sponsor_message) {
         MessageDialog *sponsor_message = new MessageDialog(this);
@@ -1218,21 +1230,21 @@ void MainWindow::ReloadSettings() {
 #endif
 
   s.beginGroup(BehaviourSettings::kSettingsGroup);
-  keep_running_ = keeprunning_available && s.value(BehaviourSettings::kKeepRunning, false).toBool();
-  playing_widget_ = s.value(BehaviourSettings::kPlayingWidget, true).toBool();
-  bool trayicon_progress = s.value(BehaviourSettings::kTrayIconProgress, false).toBool();
+  keep_running_ = keeprunning_available && s.value(BehaviourSettings::kKeepRunning, BehaviourSettings::kDefaultKeepRunning).toBool();
+  playing_widget_ = s.value(BehaviourSettings::kPlayingWidget, BehaviourSettings::kDefaultPlayingWidget).toBool();
+  bool trayicon_progress = s.value(BehaviourSettings::kTrayIconProgress, BehaviourSettings::kDefaultTrayIconProgress).toBool();
 #ifdef HAVE_DBUS
-  const bool taskbar_progress = s.value(BehaviourSettings::kTaskbarProgress, true).toBool();
+  const bool taskbar_progress = s.value(BehaviourSettings::kTaskbarProgress, BehaviourSettings::kDefaultTaskbarProgress).toBool();
 #endif
   if (playing_widget_ != ui_->widget_playing->IsEnabled()) TabSwitched();
-  doubleclick_addmode_ = static_cast<BehaviourSettings::AddBehaviour>(s.value(BehaviourSettings::kDoubleClickAddMode, static_cast<int>(BehaviourSettings::AddBehaviour::Append)).toInt());
-  doubleclick_playmode_ = static_cast<BehaviourSettings::PlayBehaviour>(s.value(BehaviourSettings::kDoubleClickPlayMode, static_cast<int>(BehaviourSettings::PlayBehaviour::Never)).toInt());
-  doubleclick_playlist_addmode_ = static_cast<BehaviourSettings::PlaylistAddBehaviour>(s.value(BehaviourSettings::kDoubleClickPlaylistAddMode, static_cast<int>(BehaviourSettings::PlaylistAddBehaviour::Play)).toInt());
-  menu_playmode_ = static_cast<BehaviourSettings::PlayBehaviour>(s.value(BehaviourSettings::kMenuPlayMode, static_cast<int>(BehaviourSettings::PlayBehaviour::Never)).toInt());
+  doubleclick_addmode_ = static_cast<BehaviourSettings::AddBehaviour>(s.value(BehaviourSettings::kDoubleClickAddMode, static_cast<int>(BehaviourSettings::kDefaultDoubleClickAddMode)).toInt());
+  doubleclick_playmode_ = static_cast<BehaviourSettings::PlayBehaviour>(s.value(BehaviourSettings::kDoubleClickPlayMode, static_cast<int>(BehaviourSettings::kDefaultDoubleClickPlayMode)).toInt());
+  doubleclick_playlist_addmode_ = static_cast<BehaviourSettings::PlaylistAddBehaviour>(s.value(BehaviourSettings::kDoubleClickPlaylistAddMode, static_cast<int>(BehaviourSettings::kDefaultDoubleClickPlaylistAddMode)).toInt());
+  menu_playmode_ = static_cast<BehaviourSettings::PlayBehaviour>(s.value(BehaviourSettings::kMenuPlayMode, static_cast<int>(BehaviourSettings::kDefaultMenuPlayMode)).toInt());
   s.endGroup();
 
   s.beginGroup(AppearanceSettings::kSettingsGroup);
-  int iconsize = s.value(AppearanceSettings::kIconSizePlayControlButtons, 32).toInt();
+  int iconsize = s.value(AppearanceSettings::kIconSizePlayControlButtons, AppearanceSettings::kDefaultIconSizePlayControlButtons).toInt();
   s.endGroup();
 
   systemtrayicon_->SetTrayiconProgress(trayicon_progress);
@@ -1251,7 +1263,7 @@ void MainWindow::ReloadSettings() {
   ui_->button_love->setIconSize(QSize(iconsize, iconsize));
 
   s.beginGroup(BackendSettings::kSettingsGroup);
-  bool volume_control = s.value("volume_control", true).toBool();
+  bool volume_control = s.value(BackendSettings::kVolumeControl, BackendSettings::kDefaultVolumeControl).toBool();
   s.endGroup();
   if (volume_control != ui_->volume->isEnabled()) {
     ui_->volume->SetEnabled(volume_control);
@@ -1266,18 +1278,18 @@ void MainWindow::ReloadSettings() {
   }
 
   s.beginGroup(PlaylistSettings::kSettingsGroup);
-  delete_files_ = s.value(PlaylistSettings::kDeleteFiles, false).toBool();
+  delete_files_ = s.value(PlaylistSettings::kDeleteFiles, PlaylistSettings::kDefaultDeleteFiles).toBool();
   s.endGroup();
 
   osd_->ReloadSettings();
 
   s.beginGroup(MainWindowSettings::kSettingsGroup);
-  album_cover_choice_controller_->search_cover_auto_action()->setChecked(s.value(MainWindowSettings::kSearchForCoverAuto, true).toBool());
+  album_cover_choice_controller_->search_cover_auto_action()->setChecked(s.value(MainWindowSettings::kSearchForCoverAuto, MainWindowSettings::kDefaultSearchForCoverAuto).toBool());
   s.endGroup();
 
 #ifdef HAVE_SUBSONIC
   s.beginGroup(SubsonicSettings::kSettingsGroup);
-  bool enable_subsonic = s.value(SubsonicSettings::kEnabled, false).toBool();
+  bool enable_subsonic = s.value(SubsonicSettings::kEnabled, SubsonicSettings::kDefaultEnabled).toBool();
   s.endGroup();
   if (enable_subsonic) {
     ui_->tabs->EnableTab(subsonic_view_);
@@ -1289,7 +1301,7 @@ void MainWindow::ReloadSettings() {
 
 #ifdef HAVE_TIDAL
   s.beginGroup(TidalSettings::kSettingsGroup);
-  bool enable_tidal = s.value(TidalSettings::kEnabled, false).toBool();
+  bool enable_tidal = s.value(TidalSettings::kEnabled, TidalSettings::kDefaultEnabled).toBool();
   s.endGroup();
   if (enable_tidal) {
     ui_->tabs->EnableTab(tidal_view_);
@@ -1301,7 +1313,7 @@ void MainWindow::ReloadSettings() {
 
 #ifdef HAVE_SPOTIFY
   s.beginGroup(SpotifySettings::kSettingsGroup);
-  bool enable_spotify = s.value(SpotifySettings::kEnabled, false).toBool();
+  bool enable_spotify = s.value(SpotifySettings::kEnabled, SpotifySettings::kDefaultEnabled).toBool();
   s.endGroup();
   if (enable_spotify) {
     ui_->tabs->EnableTab(spotify_view_);
@@ -1313,7 +1325,7 @@ void MainWindow::ReloadSettings() {
 
 #ifdef HAVE_QOBUZ
   s.beginGroup(QobuzSettings::kSettingsGroup);
-  bool enable_qobuz = s.value(QobuzSettings::kEnabled, false).toBool();
+  bool enable_qobuz = s.value(QobuzSettings::kEnabled, QobuzSettings::kDefaultEnabled).toBool();
   s.endGroup();
   if (enable_qobuz) {
     ui_->tabs->EnableTab(qobuz_view_);
@@ -1550,7 +1562,7 @@ void MainWindow::MediaPlaying() {
   bool enable_play_pause(false);
   bool can_seek(false);
 
-  PlaylistItemPtr item(app_->player()->GetCurrentItem());
+  PlaylistItemPtr item = app_->player()->GetCurrentItem();
   if (item) {
     enable_play_pause = !(item->options() & PlaylistItem::Option::PauseDisabled);
     can_seek = !(item->options() & PlaylistItem::Option::SeekDisabled);
@@ -1826,7 +1838,7 @@ void MainWindow::FilePathChanged(const QString &path) {
 
   Settings s;
   s.beginGroup(MainWindowSettings::kSettingsGroup);
-  s.setValue("file_path", path);
+  s.setValue(MainWindowSettings::kFilePath, path);
   s.endGroup();
 
 }
@@ -1851,7 +1863,7 @@ void MainWindow::Seeked(const qint64 microseconds) {
 
 void MainWindow::UpdateTrackPosition() {
 
-  PlaylistItemPtr item(app_->player()->GetCurrentItem());
+  PlaylistItemPtr item = app_->player()->GetCurrentItem();
   if (!item) return;
 
   const qint64 length = (item->EffectiveMetadata().length_nanosec() / kNsecPerSec);
@@ -2019,7 +2031,7 @@ void MainWindow::PlaylistMenuHidden() {
 
 }
 
-void MainWindow::PlaylistRightClick(const QPoint global_pos, const QModelIndex &index) {
+void MainWindow::ShowPlaylistContextMenu(const QPoint global_pos, const QModelIndex &index) {
 
   QModelIndex source_index = index;
   if (index.model() == app_->playlist_manager()->current()->filter()) {
@@ -2094,7 +2106,7 @@ void MainWindow::PlaylistRightClick(const QPoint global_pos, const QModelIndex &
   // this is available when we have one or many files and at least one of those is not CUE related
   ui_->action_edit_track->setEnabled(local_songs > 0 && editable > 0);
   ui_->action_edit_track->setVisible(local_songs > 0 && editable > 0);
-#ifdef HAVE_MUSICBRAINZ
+#ifdef HAVE_TAGFETCHER
   ui_->action_auto_complete_tags->setEnabled(local_songs > 0 && editable > 0);
   ui_->action_auto_complete_tags->setVisible(local_songs > 0 && editable > 0);
 #endif
@@ -2270,14 +2282,14 @@ void MainWindow::RescanSongs() {
   for (const QModelIndex &proxy_index : proxy_indexes) {
     const QModelIndex source_index = app_->playlist_manager()->current()->filter()->mapToSource(proxy_index);
     if (!source_index.isValid()) continue;
-    PlaylistItemPtr item(app_->playlist_manager()->current()->item_at(source_index.row()));
+    PlaylistItemPtr item = app_->playlist_manager()->current()->item_at(source_index.row());
     if (!item) continue;
     if (item->IsLocalCollectionItem()) {
       songs << item->EffectiveMetadata();
     }
     else if (item->EffectiveMetadata().source() == Song::Source::LocalFile) {
       QPersistentModelIndex persistent_index = QPersistentModelIndex(source_index);
-      app_->playlist_manager()->current()->ItemReload(persistent_index, false);
+      app_->playlist_manager()->current()->ReloadItem(persistent_index, item);
     }
   }
 
@@ -2296,7 +2308,7 @@ void MainWindow::EditTracks() {
   for (const QModelIndex &proxy_index : proxy_indexes) {
     const QModelIndex source_index = app_->playlist_manager()->current()->filter()->mapToSource(proxy_index);
     if (!source_index.isValid()) continue;
-    PlaylistItemPtr item(app_->playlist_manager()->current()->item_at(source_index.row()));
+    PlaylistItemPtr item = app_->playlist_manager()->current()->item_at(source_index.row());
     if (!item) continue;
     Song song = item->OriginalMetadata();
     if (song.IsEditable()) {
@@ -2322,22 +2334,33 @@ void MainWindow::EditTagDialogAccepted() {
     return;
   }
 
+  Playlist *playlist = app_->playlist_manager()->current();
+  if (!playlist) {
+    return;
+  }
+
+  QList<int> rows_to_reload;
   for (int i = 0; i < items.count(); ++i) {
-    PlaylistItemPtr item = items[i];
-    const Song &updated_song = songs[i];
-    // For stream tracks, apply the metadata directly since there's no file to reload from
+    PlaylistItemPtr item = items.at(i);
+    const Song &updated_song = songs.at(i);
+    // For stream tracks, apply the metadata directly since there's no file to reload from.
     if (updated_song.is_stream_service()) {
-      item->SetOriginalMetadata(updated_song);
+      playlist->UpdateItemMetadata(item, updated_song, false);
+      continue;
     }
-    else {
-      item->Reload();
+    // The item's row may have shifted since the dialog was opened, and reloading below needs a row rather than just the item.
+    const int row = playlist->row_of(item);
+    if (row != -1) {
+      rows_to_reload << row;
     }
   }
 
-  // FIXME: This is really lame but we don't know what rows have changed.
-  ui_->playlist->view()->update();
+  // Reload the just-written files from disk (to pick up any normalization the tag writer applied) and refresh only the rows that changed, instead of repainting the whole view.
+  if (!rows_to_reload.isEmpty()) {
+    playlist->ReloadItems(rows_to_reload);
+  }
 
-  app_->playlist_manager()->current()->ScheduleSaveAsync();
+  playlist->ScheduleSaveAsync();
 
 }
 
@@ -2444,7 +2467,7 @@ void MainWindow::AddFile() {
   // Last used directory
   Settings s;
   s.beginGroup(MainWindowSettings::kSettingsGroup);
-  QString directory = s.value("add_media_path", QDir::currentPath()).toString();
+  QString directory = s.value(MainWindowSettings::kAddMediaPath, QDir::currentPath()).toString();
 
   PlaylistParser parser(app_->tagreader_client(), app_->collection_backend());
 
@@ -2454,7 +2477,7 @@ void MainWindow::AddFile() {
   if (filenames.isEmpty()) return;
 
   // Save last used directory
-  s.setValue("add_media_path", filenames[0]);
+  s.setValue(MainWindowSettings::kAddMediaPath, filenames[0]);
 
   // Convert to URLs
   QList<QUrl> urls;
@@ -2474,14 +2497,14 @@ void MainWindow::AddFolder() {
   // Last used directory
   Settings s;
   s.beginGroup(MainWindowSettings::kSettingsGroup);
-  QString directory = s.value("add_folder_path", QDir::currentPath()).toString();
+  QString directory = s.value(MainWindowSettings::kAddFolderPath, QDir::currentPath()).toString();
 
   // Show dialog
   directory = QFileDialog::getExistingDirectory(this, tr("Add folder"), directory);
   if (directory.isEmpty()) return;
 
   // Save last used directory
-  s.setValue("add_folder_path", directory);
+  s.setValue(MainWindowSettings::kAddFolderPath, directory);
 
   // Add media
   MimeData *mimedata = new MimeData;
@@ -2772,7 +2795,7 @@ void MainWindow::AddFilesToTranscoder() {
   for (const QModelIndex &proxy_index : proxy_indexes) {
     const QModelIndex source_index = app_->playlist_manager()->current()->filter()->mapToSource(proxy_index);
     if (!source_index.isValid()) continue;
-    PlaylistItemPtr item(app_->playlist_manager()->current()->item_at(source_index.row()));
+    PlaylistItemPtr item = app_->playlist_manager()->current()->item_at(source_index.row());
     if (!item) continue;
     Song song = item->OriginalMetadata();
     if (!song.is_valid() || !song.url().isLocalFile()) continue;
@@ -3057,6 +3080,7 @@ SettingsDialog *MainWindow::CreateSettingsDialog() {
                                                        app_->lyrics_providers(),
                                                        app_->scrobbler(),
                                                        app_->streaming_services(),
+                                                       appearance_,
 #ifdef HAVE_GLOBALSHORTCUTS
                                                        globalshortcuts_manager_,
 #endif
@@ -3188,7 +3212,7 @@ bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr
 
 void MainWindow::AutoCompleteTags() {
 
-#ifdef HAVE_MUSICBRAINZ
+#ifdef HAVE_TAGFETCHER
 
   autocomplete_tag_items_.clear();
 
@@ -3211,7 +3235,7 @@ void MainWindow::AutoCompleteTags() {
   for (const QModelIndex &proxy_index : proxy_indexes) {
     const QModelIndex source_index = app_->playlist_manager()->current()->filter()->mapToSource(proxy_index);
     if (!source_index.isValid()) continue;
-    PlaylistItemPtr item(app_->playlist_manager()->current()->item_at(source_index.row()));
+    PlaylistItemPtr item = app_->playlist_manager()->current()->item_at(source_index.row());
     if (!item) continue;
     Song song = item->OriginalMetadata();
     if (song.IsEditable()) {
@@ -3233,17 +3257,22 @@ void MainWindow::AutoCompleteTags() {
 
 void MainWindow::AutoCompleteTagsAccepted() {
 
-  for (int i = 0; i < autocomplete_tag_items_.count(); ++i) {
-    PlaylistItemPtr item = autocomplete_tag_items_.at(i);
-    const Song reloaded_song = item->Reload();
-    if (reloaded_song.is_valid()) {
-      item->SetOriginalMetadata(reloaded_song);
+  Playlist *playlist = app_->playlist_manager()->current();
+  if (playlist) {
+    QList<int> rows_to_reload;
+    for (int i = 0; i < autocomplete_tag_items_.count(); i++) {
+      const PlaylistItemPtr item = autocomplete_tag_items_.at(i);
+      const int row = playlist->row_of(item);
+      if (row != -1) {
+        rows_to_reload << row;
+      }
+    }
+    if (!rows_to_reload.isEmpty()) {
+      playlist->ReloadItems(rows_to_reload);
     }
   }
-  autocomplete_tag_items_.clear();
 
-  // This is really lame but we don't know what rows have changed
-  ui_->playlist->view()->update();
+  autocomplete_tag_items_.clear();
 
 }
 
@@ -3508,7 +3537,7 @@ void MainWindow::FetchStreamingMetadata() {
   for (const QModelIndex &proxy_index : proxy_indexes) {
     const QModelIndex source_index = app_->playlist_manager()->current()->filter()->mapToSource(proxy_index);
     if (!source_index.isValid()) continue;
-    PlaylistItemPtr item(app_->playlist_manager()->current()->item_at(source_index.row()));
+    PlaylistItemPtr item = app_->playlist_manager()->current()->item_at(source_index.row());
     if (!item) continue;
 
     const Song &song = item->EffectiveMetadata();
@@ -3589,8 +3618,7 @@ void MainWindow::ProcessMetadataQueue() {
             if (fetched_song.year() > 0) updated_song.set_year(fetched_song.year());
             if (fetched_song.length_nanosec() > 0) updated_song.set_length_nanosec(fetched_song.length_nanosec());
             if (fetched_song.art_automatic().isValid()) updated_song.set_art_automatic(fetched_song.art_automatic());
-            playlist_item->SetOriginalMetadata(updated_song);
-            app_->playlist_manager()->current()->ItemReload(metadata_queue_entry.persistent_index, false);
+            app_->playlist_manager()->current()->UpdateItemMetadata(metadata_queue_entry.persistent_index.row(), playlist_item, updated_song, false);
           }
         }
         request->deleteLater();
@@ -3639,8 +3667,7 @@ void MainWindow::ProcessMetadataQueue() {
             if (fetched_song.year() > 0) updated_song.set_year(fetched_song.year());
             if (fetched_song.length_nanosec() > 0) updated_song.set_length_nanosec(fetched_song.length_nanosec());
             if (fetched_song.art_automatic().isValid()) updated_song.set_art_automatic(fetched_song.art_automatic());
-            playlist_item->SetOriginalMetadata(updated_song);
-            app_->playlist_manager()->current()->ItemReload(metadata_queue_entry.persistent_index, false);
+            app_->playlist_manager()->current()->UpdateItemMetadata(metadata_queue_entry.persistent_index.row(), playlist_item, updated_song, false);
           }
         }
         request->deleteLater();

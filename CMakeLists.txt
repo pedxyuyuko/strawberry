@@ -221,7 +221,11 @@ find_package(GTest)
 pkg_check_modules(LIBSPARSEHASH IMPORTED_TARGET libsparsehash)
 
 set(QT_VERSION_MAJOR 6)
-set(QT_MIN_VERSION 6.4.0)
+if(APPLE OR WIN32)
+  set(QT_MIN_VERSION 6.8.0)
+else()
+  set(QT_MIN_VERSION 6.4.0)
+endif()
 set(QT_DEFAULT_MAJOR_VERSION ${QT_VERSION_MAJOR})
 set(QT_COMPONENTS Core Concurrent Gui Widgets Network Sql)
 set(QT_OPTIONAL_COMPONENTS GuiPrivate LinguistTools Test)
@@ -300,12 +304,14 @@ if(UNIX AND NOT APPLE)
   )
 endif()
 
-optional_component(SONGFINGERPRINTING ON "Song fingerprinting and tracking"
+optional_component(CHROMAPRINT ON "Chromaprint"
   DEPENDS "chromaprint" CHROMAPRINT_FOUND
 )
-
-optional_component(MUSICBRAINZ ON "MusicBrainz integration"
-  DEPENDS "chromaprint" CHROMAPRINT_FOUND
+optional_component(SONGTRACKING ON "Song tracking"
+  DEPENDS "chromaprint" HAVE_CHROMAPRINT
+)
+optional_component(TAGFETCHER ON "Tag fetcher"
+  DEPENDS "chromaprint" HAVE_CHROMAPRINT
 )
 
 if(UNIX AND NOT APPLE)
@@ -389,10 +395,6 @@ optional_component(STREAMTAGREADER ON "Stream tagreader"
 
 optional_component(DISCORD_RPC ON "Discord Rich Presence")
 
-if(HAVE_SONGFINGERPRINTING OR HAVE_MUSICBRAINZ)
-  set(HAVE_CHROMAPRINT ON)
-endif()
-
 if(HAVE_X11_GLOBALSHORTCUTS OR HAVE_KGLOBALACCEL_GLOBALSHORTCUTS OR APPLE OR WIN32)
   set(HAVE_GLOBALSHORTCUTS ON)
 endif()
@@ -443,6 +445,7 @@ set(SOURCES
   src/core/sqlrow.cpp
   src/core/metatypes.cpp
   src/core/deletefiles.cpp
+  src/core/filewriteguard.cpp
   src/core/filesystemmusicstorage.cpp
   src/core/filesystemwatcherinterface.cpp
   src/core/mergedproxymodel.cpp
@@ -477,6 +480,7 @@ set(SOURCES
   src/core/httpbaserequest.cpp
   src/core/jsonbaserequest.cpp
   src/core/oauthenticator.cpp
+  src/core/appearance.cpp
 
   src/utilities/strutils.cpp
   src/utilities/envutils.cpp
@@ -496,6 +500,7 @@ set(SOURCES
   src/utilities/coverutils.cpp
   src/utilities/screenutils.cpp
   src/utilities/textencodingutils.cpp
+  src/utilities/styleutils.cpp
   src/utilities/coveroptions.cpp
   src/utilities/musixmatchprovider.cpp
 
@@ -726,7 +731,7 @@ set(SOURCES
   src/settings/notificationssettingspage.cpp
   src/settings/transcodersettingspage.cpp
 
-  src/dialogs/about.cpp
+  src/dialogs/aboutdialog.cpp
   src/dialogs/console.cpp
   src/dialogs/errordialog.cpp
   src/dialogs/edittagdialog.cpp
@@ -734,7 +739,6 @@ set(SOURCES
   src/dialogs/addstreamdialog.cpp
   src/dialogs/userpassdialog.cpp
   src/dialogs/deleteconfirmationdialog.cpp
-  src/dialogs/lastfmimportdialog.cpp
   src/dialogs/messagedialog.cpp
   src/dialogs/saveplaylistsdialog.cpp
 
@@ -806,7 +810,6 @@ set(SOURCES
   src/scrobbler/scrobblemetadata.cpp
   src/scrobbler/lastfmscrobbler.cpp
   src/scrobbler/listenbrainzscrobbler.cpp
-  src/scrobbler/lastfmimport.cpp
 
   src/organize/organize.cpp
   src/organize/organizeformat.cpp
@@ -876,6 +879,7 @@ set(HEADERS
   src/core/httpbaserequest.h
   src/core/jsonbaserequest.h
   src/core/oauthenticator.h
+  src/core/appearance.h
 
   src/tagreader/tagreaderclient.h
   src/tagreader/tagreaderreply.h
@@ -1025,7 +1029,7 @@ set(HEADERS
   src/settings/notificationssettingspage.h
   src/settings/transcodersettingspage.h
 
-  src/dialogs/about.h
+  src/dialogs/aboutdialog.h
   src/dialogs/errordialog.h
   src/dialogs/console.h
   src/dialogs/edittagdialog.h
@@ -1033,7 +1037,6 @@ set(HEADERS
   src/dialogs/addstreamdialog.h
   src/dialogs/userpassdialog.h
   src/dialogs/deleteconfirmationdialog.h
-  src/dialogs/lastfmimportdialog.h
   src/dialogs/messagedialog.h
   src/dialogs/saveplaylistsdialog.h
 
@@ -1099,7 +1102,6 @@ set(HEADERS
   src/scrobbler/scrobblercache.h
   src/scrobbler/lastfmscrobbler.h
   src/scrobbler/listenbrainzscrobbler.h
-  src/scrobbler/lastfmimport.h
 
   src/organize/organize.h
   src/organize/organizeformatvalidator.h
@@ -1184,14 +1186,13 @@ set(UI
   src/equalizer/equalizer.ui
   src/equalizer/equalizerslider.ui
 
-  src/dialogs/about.ui
+  src/dialogs/aboutdialog.ui
   src/dialogs/errordialog.ui
   src/dialogs/console.ui
   src/dialogs/edittagdialog.ui
   src/dialogs/trackselectiondialog.ui
   src/dialogs/addstreamdialog.ui
   src/dialogs/userpassdialog.ui
-  src/dialogs/lastfmimportdialog.ui
   src/dialogs/messagedialog.ui
   src/dialogs/saveplaylistsdialog.ui
 
@@ -1326,15 +1327,15 @@ optional_source(MSVC SOURCES src/engine/uwpdevicefinder.cpp src/engine/asiodevic
 optional_source(MSVC SOURCES src/core/winsystemmediatransportcontrols.cpp HEADERS src/core/winsystemmediatransportcontrols.h)
 optional_source(HAVE_CHROMAPRINT SOURCES src/engine/chromaprinter.cpp)
 
-optional_source(HAVE_MUSICBRAINZ
+optional_source(HAVE_TAGFETCHER
   SOURCES
-    src/musicbrainz/acoustidclient.cpp
-    src/musicbrainz/musicbrainzclient.cpp
-    src/musicbrainz/tagfetcher.cpp
+    src/tagfetcher/acoustidclient.cpp
+    src/tagfetcher/musicbrainzclient.cpp
+    src/tagfetcher/tagfetcher.cpp
   HEADERS
-    src/musicbrainz/acoustidclient.h
-    src/musicbrainz/musicbrainzclient.h
-    src/musicbrainz/tagfetcher.h
+    src/tagfetcher/acoustidclient.h
+    src/tagfetcher/musicbrainzclient.h
+    src/tagfetcher/tagfetcher.h
 )
 
 optional_source(HAVE_EBUR128 SOURCES src/engine/ebur128analysis.cpp)
@@ -1627,6 +1628,7 @@ if(APPLE)
     "-framework DiskArbitration"
     "-framework IOKit"
     "-framework ScriptingBridge"
+    "-framework UserNotifications"
   )
   if(HAVE_SPARKLE)
     target_include_directories(strawberry_lib SYSTEM PRIVATE ${SPARKLE}/Headers)

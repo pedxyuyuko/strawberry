@@ -90,8 +90,8 @@
 #include "collection/collectionbackend.h"
 #include "playlist/playlist.h"
 #include "playlist/playlistdelegates.h"
-#ifdef HAVE_MUSICBRAINZ
-#  include "musicbrainz/tagfetcher.h"
+#ifdef HAVE_TAGFETCHER
+#  include "tagfetcher/tagfetcher.h"
 #  include "trackselectiondialog.h"
 #endif
 #include "lyrics/lyricsfetcher.h"
@@ -115,6 +115,8 @@ using namespace Qt::Literals::StringLiterals;
 
 namespace {
 constexpr char kSettingsGroup[] = "EditTagDialog";
+constexpr char kGeometry[] = "geometry";
+constexpr char kCurrentTab[] = "current_tab";
 constexpr int kSmallImageSize = 128;
 
 // ID3v2 version constants
@@ -148,7 +150,7 @@ EditTagDialog::EditTagDialog(const SharedPtr<NetworkAccessManager> network,
       current_albumcover_loader_(current_albumcover_loader),
       cover_providers_(cover_providers),
       album_cover_choice_controller_(new AlbumCoverChoiceController(this)),
-#ifdef HAVE_MUSICBRAINZ
+#ifdef HAVE_TAGFETCHER
       tag_fetcher_(new TagFetcher(network, this)),
       results_dialog_(new TrackSelectionDialog(tagreader_client, this)),
 #endif
@@ -165,7 +167,7 @@ EditTagDialog::EditTagDialog(const SharedPtr<NetworkAccessManager> network,
 
   QObject::connect(&*albumcover_loader_, &AlbumCoverLoader::AlbumCoverLoaded, this, &EditTagDialog::AlbumCoverLoaded);
 
-#ifdef HAVE_MUSICBRAINZ
+#ifdef HAVE_TAGFETCHER
   QObject::connect(tag_fetcher_, &TagFetcher::ResultAvailable, results_dialog_, &TrackSelectionDialog::FetchTagFinished, Qt::QueuedConnection);
   QObject::connect(tag_fetcher_, &TagFetcher::Progress, results_dialog_, &TrackSelectionDialog::FetchTagProgress);
   QObject::connect(results_dialog_, &TrackSelectionDialog::SongChosen, this, &EditTagDialog::FetchTagSongChosen);
@@ -181,7 +183,7 @@ EditTagDialog::EditTagDialog(const SharedPtr<NetworkAccessManager> network,
   ui_->label_lyrics->hide();
 
   ui_->fetch_tag->setIcon(QPixmap::fromImage(QImage(u":/pictures/musicbrainz.png"_s)));
-#ifdef HAVE_MUSICBRAINZ
+#ifdef HAVE_TAGFETCHER
   ui_->fetch_tag->setEnabled(true);
 #else
   ui_->fetch_tag->setEnabled(false);
@@ -243,7 +245,7 @@ EditTagDialog::EditTagDialog(const SharedPtr<NetworkAccessManager> network,
   QObject::connect(ui_->button_box, &QDialogButtonBox::clicked, this, &EditTagDialog::ButtonClicked);
   QObject::connect(ui_->playcount_reset, &QPushButton::clicked, this, &EditTagDialog::ResetPlayStatistics);
   QObject::connect(ui_->rating, &RatingWidget::RatingChanged, this, &EditTagDialog::SongRated);
-#ifdef HAVE_MUSICBRAINZ
+#ifdef HAVE_TAGFETCHER
   QObject::connect(ui_->fetch_tag, &QPushButton::clicked, this, &EditTagDialog::FetchTag);
 #endif
   QObject::connect(ui_->fetch_lyrics, &QPushButton::clicked, this, &EditTagDialog::FetchLyrics);
@@ -325,10 +327,10 @@ void EditTagDialog::showEvent(QShowEvent *e) {
     // Restore the tab that was current last time.
     Settings s;
     s.beginGroup(kSettingsGroup);
-    if (s.contains("geometry")) {
-      restoreGeometry(s.value("geometry").toByteArray());
+    if (s.contains(kGeometry)) {
+      restoreGeometry(s.value(kGeometry).toByteArray());
     }
-    ui_->tab_widget->setCurrentIndex(s.value("current_tab").toInt());
+    ui_->tab_widget->setCurrentIndex(s.value(kCurrentTab).toInt());
     s.endGroup();
 
     album_cover_choice_controller_->ReloadSettings();
@@ -346,8 +348,8 @@ void EditTagDialog::hideEvent(QHideEvent *e) {
   // Save the current tab
   Settings s;
   s.beginGroup(kSettingsGroup);
-  s.setValue("geometry", saveGeometry());
-  s.setValue("current_tab", ui_->tab_widget->currentIndex());
+  s.setValue(kGeometry, saveGeometry());
+  s.setValue(kCurrentTab, ui_->tab_widget->currentIndex());
   s.endGroup();
 
   QDialog::hideEvent(e);
@@ -428,6 +430,7 @@ bool EditTagDialog::eventFilter(QObject *o, QEvent *e) {
 SongList EditTagDialog::songs() const {
 
   SongList result;
+  result.reserve(data_.count());
   for (const Data &d : data_) {
     result << d.current_;
   }
@@ -445,7 +448,7 @@ bool EditTagDialog::SetLoading(const QString &message) {
   ui_->button_box->setEnabled(!loading);
   ui_->tab_widget->setEnabled(!loading);
   ui_->song_list->setEnabled(!loading);
-#ifdef HAVE_MUSICBRAINZ
+#ifdef HAVE_TAGFETCHER
   ui_->fetch_tag->setEnabled(!loading);
 #endif
   ui_->loading_label->setVisible(loading);
@@ -1540,7 +1543,7 @@ void EditTagDialog::SongRated(const float rating) {
 
 void EditTagDialog::FetchTag() {
 
-#ifdef HAVE_MUSICBRAINZ
+#ifdef HAVE_TAGFETCHER
 
   const QModelIndexList sel = ui_->song_list->selectionModel()->selectedIndexes();
 
@@ -1567,7 +1570,7 @@ void EditTagDialog::FetchTag() {
 
 void EditTagDialog::FetchTagSongChosen(const Song &original_song, const Song &new_metadata) {
 
-#ifdef HAVE_MUSICBRAINZ
+#ifdef HAVE_TAGFETCHER
 
   const QString filename = original_song.url().toLocalFile();
 

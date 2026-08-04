@@ -2,6 +2,17 @@
 <!DOCTYPE TS>
 <TS version="2.1" language="hu_HU" sourcelanguage="en-US">
   <context>
+    <name>ASXParser</name>
+    <message>
+      <source>ASX playlist is too large</source>
+      <translation type="unfinished">ASX playlist is too large</translation>
+    </message>
+    <message>
+      <source>Failed to write ASX playlist</source>
+      <translation type="unfinished">Failed to write ASX playlist</translation>
+    </message>
+  </context>
+  <context>
     <name>About</name>
     <message>
       <source>About</source>
@@ -288,7 +299,7 @@
     </message>
     <message>
       <source>Album</source>
-      <translation type="unfinished">Album</translation>
+      <translation>Album</translation>
     </message>
     <message>
       <source>Search</source>
@@ -359,10 +370,6 @@
     <message>
       <source>Style</source>
       <translation>Stílus</translation>
-    </message>
-    <message>
-      <source>Use system theme icons</source>
-      <translation>Rendszerikonok használata</translation>
     </message>
     <message>
       <source>Tabbar colors</source>
@@ -466,7 +473,7 @@
     </message>
     <message>
       <source>40%</source>
-      <translation type="unfinished">40%</translation>
+      <translation>40%</translation>
     </message>
     <message>
       <source>Icon sizes</source>
@@ -513,12 +520,104 @@
       <translation>Válassza ki a lejátszott szám színét a lejátszólistán</translation>
     </message>
     <message>
+      <source>Window</source>
+      <translation>Ablak</translation>
+    </message>
+    <message>
+      <source>Window text</source>
+      <translation>Ablak szövege</translation>
+    </message>
+    <message>
+      <source>Base</source>
+      <translation type="unfinished">Base</translation>
+    </message>
+    <message>
+      <source>Alternate base</source>
+      <translation type="unfinished">Alternate base</translation>
+    </message>
+    <message>
+      <source>Tooltip base</source>
+      <translation type="unfinished">Tooltip base</translation>
+    </message>
+    <message>
+      <source>Tooltip text</source>
+      <translation>Tooltip Szövege</translation>
+    </message>
+    <message>
+      <source>Placeholder text</source>
+      <translation>Helyfoglaló szöveg</translation>
+    </message>
+    <message>
+      <source>Text</source>
+      <translation>Szöveg</translation>
+    </message>
+    <message>
+      <source>Button</source>
+      <translation>Gomb</translation>
+    </message>
+    <message>
+      <source>Button text</source>
+      <translation>Gomb szövege</translation>
+    </message>
+    <message>
+      <source>Bright text</source>
+      <translation>Világos szöveg</translation>
+    </message>
+    <message>
+      <source>Select color</source>
+      <translation>Szín kiválasztása</translation>
+    </message>
+    <message>
       <source>Select background image</source>
       <translation>Háttérkép kiválasztása</translation>
     </message>
     <message>
-      <source>You need to restart Strawberry for this setting to take affect.</source>
-      <translation type="unfinished">You need to restart Strawberry for this setting to take affect.</translation>
+      <source>Colors</source>
+      <translation>Színek</translation>
+    </message>
+    <message>
+      <source>&amp;Use the system default color set</source>
+      <translation>&amp;Rendszer alapértelmezett színkészletének használata</translation>
+    </message>
+    <message>
+      <source>Use a custom color set</source>
+      <translation>Egyedi színkészlet használata</translation>
+    </message>
+    <message>
+      <source>Set a custom color set suitable for a dark theme</source>
+      <translation type="unfinished">Set a custom color set suitable for a dark theme</translation>
+    </message>
+    <message>
+      <source>Dark mode</source>
+      <translation>Sötét mód</translation>
+    </message>
+    <message>
+      <source>Reset the custom color set to the system default colors</source>
+      <translation type="unfinished">Reset the custom color set to the system default colors</translation>
+    </message>
+    <message>
+      <source>Reset to default</source>
+      <translation>Visszaállítás alapértelmezettre</translation>
+    </message>
+    <message>
+      <source>You might need to restart Strawberry for this setting to fully apply</source>
+      <translation>Lehet hogy újra kell indítani a Strawberry-t ennek a beállításnak az életbe léptetéséhez</translation>
+    </message>
+    <message>
+      <source>You need to restart Strawberry for this setting to take affect</source>
+      <translation>Újra kell indítani a Strawberry-t ennek a beállításnak az életbe léptetéséhez</translation>
+    </message>
+    <message>
+      <source>System icons</source>
+      <translation>Rendszerikonok</translation>
+    </message>
+    <message>
+      <source>Changing colors is only supported with some styles</source>
+      <translation type="unfinished">Changing colors is only supported with some styles</translation>
+    </message>
+    <message>
+      <source>Dark colors</source>
+      <translation>Sötét színek</translation>
     </message>
   </context>
   <context>
@@ -553,11 +652,11 @@
     </message>
     <message>
       <source>pcm</source>
-      <translation type="unfinished">pcm</translation>
+      <translation>pcm</translation>
     </message>
     <message>
       <source>Exclusive mode (Experimental)</source>
-      <translation type="unfinished">Exclusive mode (Experimental)</translation>
+      <translation>Exkluzív mód (Kísérleti)</translation>
     </message>
     <message>
       <source>Options</source>
@@ -617,11 +716,11 @@
     </message>
     <message>
       <source>Audio normalization</source>
-      <translation type="unfinished">Audio normalization</translation>
+      <translation>Audió normalizálása</translation>
     </message>
     <message>
       <source>No audio normalization</source>
-      <translation type="unfinished">No audio normalization</translation>
+      <translation>Audió normalizálása kikapcsolva</translation>
     </message>
     <message>
       <source>Replay Gain</source>
@@ -697,7 +796,23 @@
     </message>
     <message>
       <source>You need to restart Strawberry for this setting to take affect</source>
-      <translation type="unfinished">You need to restart Strawberry for this setting to take affect</translation>
+      <translation>Újra kell indítani a Strawberry-t ennek a beállításnak az életbe léptetéséhez</translation>
+    </message>
+    <message>
+      <source>Map the volume slider to a decibel scale so that perceived loudness changes evenly. Each 1% step equals 0.5 dB, 100% is 0 dB and 0% is silence.</source>
+      <translation type="unfinished">Map the volume slider to a decibel scale so that perceived loudness changes evenly. Each 1% step equals 0.5 dB, 100% is 0 dB and 0% is silence.</translation>
+    </message>
+    <message>
+      <source>Exponential volume scaling</source>
+      <translation type="unfinished">Exponential volume scaling</translation>
+    </message>
+    <message>
+      <source>Device warm-up</source>
+      <translation type="unfinished">Device warm-up</translation>
+    </message>
+    <message>
+      <source>Delay between opening the audio device and starting playback, to avoid the start of the track being cut off while the device (DAC) is still becoming ready.  Set to 0 to disable.</source>
+      <translation type="unfinished">Delay between opening the audio device and starting playback, to avoid the start of the track being cut off while the device (DAC) is still becoming ready.  Set to 0 to disable.</translation>
     </message>
   </context>
   <context>
@@ -1391,7 +1506,7 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     </message>
     <message>
       <source> pt</source>
-      <translation type="unfinished"> pt</translation>
+      <translation> pt</translation>
     </message>
     <message>
       <source>Preview</source>
@@ -1463,7 +1578,7 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     </message>
     <message>
       <source>%filename%</source>
-      <translation type="unfinished">%filename%</translation>
+      <translation>%filename%</translation>
     </message>
     <message>
       <source>Add song filename</source>
@@ -1471,7 +1586,7 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     </message>
     <message>
       <source>%url%</source>
-      <translation type="unfinished">%url%</translation>
+      <translation>%url%</translation>
     </message>
     <message>
       <source>Add song URL</source>
@@ -1479,7 +1594,7 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     </message>
     <message>
       <source>%rating%</source>
-      <translation type="unfinished">%rating%</translation>
+      <translation>%rating%</translation>
     </message>
     <message>
       <source>Add song rating</source>
@@ -2287,11 +2402,11 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     </message>
     <message>
       <source>Yes</source>
-      <translation type="unfinished">Yes</translation>
+      <translation>Igen</translation>
     </message>
     <message>
       <source>No</source>
-      <translation type="unfinished">No</translation>
+      <translation>Nem</translation>
     </message>
     <message>
       <source>None</source>
@@ -2299,7 +2414,7 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     </message>
     <message>
       <source>Cover is unset.</source>
-      <translation type="unfinished">Cover is unset.</translation>
+      <translation>Albumkép nincs beállítva.</translation>
     </message>
     <message>
       <source>Cover from embedded image.</source>
@@ -2347,15 +2462,15 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     </message>
     <message>
       <source>loading...</source>
-      <translation type="unfinished">loading...</translation>
+      <translation>betöltés...</translation>
     </message>
     <message>
       <source>Not found.</source>
-      <translation type="unfinished">Not found.</translation>
+      <translation>Nem található.</translation>
     </message>
     <message>
       <source>Could not write metadata to %1</source>
-      <translation type="unfinished">Could not write metadata to %1</translation>
+      <translation>Nem írható metaadat ebbe a fájlba: %1</translation>
     </message>
     <message>
       <source>Could not write metadata to %1: %2</source>
@@ -2367,7 +2482,7 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     </message>
     <message>
       <source>2.3</source>
-      <translation type="unfinished">2.3</translation>
+      <translation>'2.3'</translation>
     </message>
     <message>
       <source>2.4</source>
@@ -2454,7 +2569,7 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     </message>
     <message>
       <source>Dance</source>
-      <translation type="unfinished">Dance</translation>
+      <translation>Tánc</translation>
     </message>
     <message>
       <source>Full Bass</source>
@@ -2486,15 +2601,15 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     </message>
     <message>
       <source>Pop</source>
-      <translation type="unfinished">Pop</translation>
+      <translation>Pop</translation>
     </message>
     <message>
       <source>Reggae</source>
-      <translation type="unfinished">Reggae</translation>
+      <translation>Reggae</translation>
     </message>
     <message>
       <source>Rock</source>
-      <translation type="unfinished">Rock</translation>
+      <translation>Rock</translation>
     </message>
     <message>
       <source>Soft</source>
@@ -2502,7 +2617,7 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     </message>
     <message>
       <source>Ska</source>
-      <translation type="unfinished">Ska</translation>
+      <translation>Ska</translation>
     </message>
     <message>
       <source>Soft Rock</source>
@@ -2510,7 +2625,7 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     </message>
     <message>
       <source>Techno</source>
-      <translation type="unfinished">Techno</translation>
+      <translation>Techno</translation>
     </message>
     <message>
       <source>Zero</source>
@@ -2526,7 +2641,7 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     </message>
     <message>
       <source>You need to restart playback for this setting to take affect.</source>
-      <translation type="unfinished">You need to restart playback for this setting to take affect.</translation>
+      <translation>Újra kell indítani a lejátszást ennek a beállításnak az életbe léptetéséhez.</translation>
     </message>
   </context>
   <context>
@@ -2537,7 +2652,7 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     </message>
     <message>
       <source>%1 dB</source>
-      <translation type="unfinished">%1 dB</translation>
+      <translation>%1 dB</translation>
     </message>
   </context>
   <context>
@@ -2589,15 +2704,15 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     </message>
     <message>
       <source>Add root directory</source>
-      <translation type="unfinished">Add root directory</translation>
+      <translation>Gyökérkönyvtár hozzáadása</translation>
     </message>
     <message>
       <source>Remove selected root directory</source>
-      <translation type="unfinished">Remove selected root directory</translation>
+      <translation>Kiválasztott gyökérkönyvtár eltávolítása</translation>
     </message>
     <message>
       <source>Toggle between list and tree view</source>
-      <translation type="unfinished">Toggle between list and tree view</translation>
+      <translation>Váltás lista- és fa nézet között</translation>
     </message>
     <message>
       <source>Select folder to add as tree root</source>
@@ -2647,15 +2762,15 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     <name>FileViewTree</name>
     <message>
       <source>Append to current playlist</source>
-      <translation type="unfinished">Append to current playlist</translation>
+      <translation>Hozzáfűzés a jelenlegi lejátszólistához</translation>
     </message>
     <message>
       <source>Replace current playlist</source>
-      <translation type="unfinished">Replace current playlist</translation>
+      <translation>Jelenlegi lejátszólista cseréje</translation>
     </message>
     <message>
       <source>Open in new playlist</source>
-      <translation type="unfinished">Open in new playlist</translation>
+      <translation>Megnyitás új lejátszólistában</translation>
     </message>
     <message>
       <source>Copy to collection...</source>
@@ -2683,7 +2798,7 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     </message>
     <message>
       <source>Files</source>
-      <translation type="unfinished">Files</translation>
+      <translation>Fájlok</translation>
     </message>
   </context>
   <context>
@@ -2713,11 +2828,11 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     </message>
     <message>
       <source>Writing database failed: %1</source>
-      <translation type="unfinished">Writing database failed: %1</translation>
+      <translation>Adatbázis írási hiba: %1</translation>
     </message>
     <message>
       <source>Writing database failed.</source>
-      <translation type="unfinished">Writing database failed.</translation>
+      <translation>Adatbázis írási hiba.</translation>
     </message>
   </context>
   <context>
@@ -3019,76 +3134,6 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     </message>
   </context>
   <context>
-    <name>LastFMImport</name>
-    <message>
-      <source>Missing username, please login to last.fm first!</source>
-      <translation>Hiányzó felhasználónév, először jelentkezzen be a last.fm-be!</translation>
-    </message>
-  </context>
-  <context>
-    <name>LastFMImportDialog</name>
-    <message>
-      <source>Import data from last.fm</source>
-      <translation>Adatok importálása last.fm-ből</translation>
-    </message>
-    <message>
-      <source>Choose data to import from last.fm</source>
-      <translation>A last.fm-ből importálandó adatok kiválasztása</translation>
-    </message>
-    <message>
-      <source>Last played</source>
-      <translation>Legutóbb játszott</translation>
-    </message>
-    <message>
-      <source>Play counts</source>
-      <translation>Lejátszásszámok</translation>
-    </message>
-    <message>
-      <source>Warning: Play counts and last played from last.fm will completely replace the same data for the matched songs. Play counts will replace the data based on artist and song title for the same albums! Please backup your database before you start.</source>
-      <translation>Figyelmeztetés: A last.fm-ből származó lejátszásszámok és legutóbbi lejátszási időpontok lecserélik az egyező számok megfelelő adatait. A lejátszásszámok felváltják az egyező albumok adatait az előadó és a szám címe alapján. Mielőtt elindítaná, készítsen biztonsági másolatot az adatbázisáról.</translation>
-    </message>
-    <message>
-      <source>Go!</source>
-      <translation>Ugrás!</translation>
-    </message>
-    <message>
-      <source>Close</source>
-      <translation>Bezárás</translation>
-    </message>
-    <message>
-      <source>Cancel</source>
-      <translation>Mégse</translation>
-    </message>
-    <message>
-      <source>Receiving initial data from last.fm...</source>
-      <translation>Kezdeti adatok fogadása a last.fm-től…</translation>
-    </message>
-    <message>
-      <source>Receiving playcount for %1 songs and last played for %2 songs.</source>
-      <translation>Lejátszásszám fogadása %1 számhoz, és a legutóbbi lejátszás fogadása %2 számhoz.</translation>
-    </message>
-    <message>
-      <source>Receiving last played for %1 songs.</source>
-      <translation>Legutóbbi lejátszás fogadása %1 számhoz.</translation>
-    </message>
-    <message>
-      <source>Receiving playcounts for %1 songs.</source>
-      <translation>Lejátszások számának fogadása %1 számhoz.</translation>
-    </message>
-    <message>
-      <source>Playcounts for %1 songs and last played for %2 songs received.</source>
-      <translation>Lejátszásszám fogadva %1 számhoz, és a legutóbbi lejátszás fogadva %2 számhoz.</translation>
-    </message>
-    <message>
-      <source>Last played for %1 songs received.</source>
-      <translation>Legutóbbi lejátszások fogadva %1 számhoz.</translation>
-    </message>
-    <message>
-      <source>Playcounts for %1 songs received.</source>
-      <translation>Lejátszásszám fogadva %1 számhoz.</translation>
-    </message>
-  </context>
-  <context>
     <name>LastFMScrobbler</name>
     <message>
       <source>%1 Scrobbler Authentication</source>
@@ -3353,10 +3398,6 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
       <translation>Lejátszólista összeke&amp;verése</translation>
     </message>
     <message>
-      <source>Ctrl+H</source>
-      <translation type="unfinished">Ctrl+H</translation>
-    </message>
-    <message>
       <source>&amp;Add file...</source>
       <translation>&amp;Fájl hozzáadása…</translation>
     </message>
@@ -3507,10 +3548,6 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     <message>
       <source>Show sidebar</source>
       <translation>Oldalsáv megjelenítése</translation>
-    </message>
-    <message>
-      <source>Import data from last.fm...</source>
-      <translation>Adatok importálása last.fm-ből…</translation>
     </message>
     <message>
       <source>Context</source>
@@ -3743,6 +3780,22 @@ Ha nincs egyezés, akkor a legnagyobb képet veszi a könyvtárból.</translatio
     <message>
       <source>Collection rescan notice</source>
       <translation>Gyűjtemény újraolvasási figyelmeztetés</translation>
+    </message>
+    <message>
+      <source>Ctrl+Shift+H</source>
+      <translation type="unfinished">Ctrl+Shift+H</translation>
+    </message>
+    <message>
+      <source>Go to last playlist tab</source>
+      <translation type="unfinished">Go to last playlist tab</translation>
+    </message>
+    <message>
+      <source>Go to active playlist tab</source>
+      <translation type="unfinished">Go to active playlist tab</translation>
+    </message>
+    <message>
+      <source>Close current playlist tab</source>
+      <translation type="unfinished">Close current playlist tab</translation>
     </message>
   </context>
   <context>
@@ -7126,6 +7179,14 @@ másodpercnél hosszabbak, illetve legalább a felükig vagy 4 percig vannak lej
   <context>
     <name>TagFetcher</name>
     <message>
+      <source>Stage: %1</source>
+      <translation type="unfinished">Stage: %1</translation>
+    </message>
+    <message>
+      <source>Reason: %1</source>
+      <translation type="unfinished">Reason: %1</translation>
+    </message>
+    <message>
       <source>Identifying song</source>
       <translation type="unfinished">Identifying song</translation>
     </message>
@@ -7134,8 +7195,36 @@ másodpercnél hosszabbak, illetve legalább a felükig vagy 4 percig vannak lej
       <translation type="unfinished">Fingerprinting song</translation>
     </message>
     <message>
+      <source>Generated fingerprint is empty or invalid</source>
+      <translation type="unfinished">Generated fingerprint is empty or invalid</translation>
+    </message>
+    <message>
+      <source>Fingerprinting</source>
+      <translation type="unfinished">Fingerprinting</translation>
+    </message>
+    <message>
+      <source>Fingerprint length: %1</source>
+      <translation type="unfinished">Fingerprint length: %1</translation>
+    </message>
+    <message>
+      <source>Minimum required length: %1</source>
+      <translation type="unfinished">Minimum required length: %1</translation>
+    </message>
+    <message>
       <source>Downloading metadata</source>
       <translation type="unfinished">Downloading metadata</translation>
+    </message>
+    <message>
+      <source>No MusicBrainz metadata was found for this track</source>
+      <translation type="unfinished">No MusicBrainz metadata was found for this track</translation>
+    </message>
+    <message>
+      <source>MusicBrainz metadata</source>
+      <translation type="unfinished">MusicBrainz metadata</translation>
+    </message>
+    <message>
+      <source>Candidate metadata rows: 0</source>
+      <translation type="unfinished">Candidate metadata rows: 0</translation>
     </message>
   </context>
   <context>
@@ -7309,10 +7398,6 @@ másodpercnél hosszabbak, illetve legalább a felükig vagy 4 percig vannak lej
       <translation>Címkeletöltő</translation>
     </message>
     <message>
-      <source>Sorry</source>
-      <translation>Elnézést</translation>
-    </message>
-    <message>
       <source>Strawberry was unable to find results for this file</source>
       <translation>A Strawberry nem talált semmit ehhez a fájlhoz</translation>
     </message>
@@ -7349,6 +7434,10 @@ másodpercnél hosszabbak, illetve legalább a felükig vagy 4 percig vannak lej
       <translation>Következő</translation>
     </message>
     <message>
+      <source>Error</source>
+      <translation type="unfinished">Error</translation>
+    </message>
+    <message>
       <source>Original tags</source>
       <translation>Eredeti címkék</translation>
     </message>
@@ -7363,6 +7452,10 @@ másodpercnél hosszabbak, illetve legalább a felükig vagy 4 percig vannak lej
     <message>
       <source>Album artist</source>
       <translation type="unfinished">Album artist</translation>
+    </message>
+    <message>
+      <source>No results</source>
+      <translation type="unfinished">No results</translation>
     </message>
   </context>
   <context>
@@ -7935,6 +8028,13 @@ másodpercnél hosszabbak, illetve legalább a felükig vagy 4 percig vannak lej
     <message>
       <source>Save the .waveform files directly in the songs folders</source>
       <translation type="unfinished">Save the .waveform files directly in the songs folders</translation>
+    </message>
+  </context>
+  <context>
+    <name>XSPFParser</name>
+    <message>
+      <source>Failed to write XSPF playlist</source>
+      <translation type="unfinished">Failed to write XSPF playlist</translation>
     </message>
   </context>
 </TS>

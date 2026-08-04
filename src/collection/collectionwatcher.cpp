@@ -68,7 +68,7 @@
 #  include "core/filesystemwatcherqt.h"
 #endif
 
-#ifdef HAVE_SONGFINGERPRINTING
+#ifdef HAVE_SONGTRACKING
 #  include "engine/chromaprinter.h"
 #endif
 #ifdef HAVE_EBUR128
@@ -219,8 +219,8 @@ void CollectionWatcher::ReloadSettings() {
   Settings s;
   s.beginGroup(CollectionSettings::kSettingsGroup);
   if (source_ == Song::Source::Collection) {
-    scan_on_startup_ = s.value(CollectionSettings::kStartupScan, true).toBool();
-    monitor_ = s.value(CollectionSettings::kMonitor, true).toBool();
+    scan_on_startup_ = s.value(CollectionSettings::kStartupScan, CollectionSettings::kDefaultStartupScan).toBool();
+    monitor_ = s.value(CollectionSettings::kMonitor, CollectionSettings::kDefaultMonitor).toBool();
   }
   else {
     scan_on_startup_ = true;
@@ -228,18 +228,18 @@ void CollectionWatcher::ReloadSettings() {
   }
   const QStringList filters = s.value(CollectionSettings::kCoverArtPatterns, QStringList() << u"front"_s << u"cover"_s).toStringList();
   if (source_ == Song::Source::Collection) {
-    song_tracking_ = s.value(CollectionSettings::kSongTracking, false).toBool();
-    song_ebur128_loudness_analysis_ = s.value(CollectionSettings::kSongENUR128LoudnessAnalysis, false).toBool();
-    mark_songs_unavailable_ = song_tracking_ ? true : s.value(CollectionSettings::kMarkSongsUnavailable, true).toBool();
+    song_tracking_ = s.value(CollectionSettings::kSongTracking, CollectionSettings::kDefaultSongTracking).toBool();
+    song_ebur128_loudness_analysis_ = s.value(CollectionSettings::kSongENUR128LoudnessAnalysis, CollectionSettings::kDefaultSongENUR128LoudnessAnalysis).toBool();
+    mark_songs_unavailable_ = song_tracking_ ? true : s.value(CollectionSettings::kMarkSongsUnavailable, CollectionSettings::kDefaultMarkSongsUnavailable).toBool();
   }
   else {
     song_tracking_ = false;
     song_ebur128_loudness_analysis_ = false;
     mark_songs_unavailable_ = false;
   }
-  expire_unavailable_songs_days_ = s.value(CollectionSettings::kExpireUnavailableSongs, 60).toInt();
-  overwrite_playcount_ = s.value(CollectionSettings::kOverwritePlaycount, false).toBool();
-  overwrite_rating_ = s.value(CollectionSettings::kOverwriteRating, false).toBool();
+  expire_unavailable_songs_days_ = s.value(CollectionSettings::kExpireUnavailableSongs, CollectionSettings::kDefaultExpireUnavailableSongs).toInt();
+  overwrite_playcount_ = s.value(CollectionSettings::kOverwritePlaycount, CollectionSettings::kDefaultOverwritePlaycount).toBool();
+  overwrite_rating_ = s.value(CollectionSettings::kOverwriteRating, CollectionSettings::kDefaultOverwriteRating).toBool();
   s.endGroup();
 
   best_art_filters_.clear();
@@ -591,7 +591,7 @@ void CollectionWatcher::ScanSubdirectory(const CollectionDirectory &dir, const Q
 
   bool songs_missing_fingerprint = false;
   bool songs_missing_loudness_characteristics = false;
-#ifdef HAVE_SONGFINGERPRINTING
+#ifdef HAVE_SONGTRACKING
   if (song_tracking_) {
     songs_missing_fingerprint = t->HasSongsWithMissingFingerprint(path);
   }
@@ -723,7 +723,7 @@ void CollectionWatcher::ScanSubdirectory(const CollectionDirectory &dir, const Q
 
       bool missing_fingerprint = false;
       bool missing_loudness_characteristics = false;
-#ifdef HAVE_SONGFINGERPRINTING
+#ifdef HAVE_SONGTRACKING
       if (song_tracking_ && matching_song.fingerprint().isEmpty()) {
         missing_fingerprint = true;
       }
@@ -754,7 +754,7 @@ void CollectionWatcher::ScanSubdirectory(const CollectionDirectory &dir, const Q
       else if (t->ignores_mtime() || changed || missing_fingerprint || missing_loudness_characteristics) {
 
         QString fingerprint;
-#ifdef HAVE_SONGFINGERPRINTING
+#ifdef HAVE_SONGTRACKING
         if (song_tracking_) {
           Chromaprinter chromaprinter(file);
           fingerprint = chromaprinter.CreateFingerprint();
@@ -777,7 +777,7 @@ void CollectionWatcher::ScanSubdirectory(const CollectionDirectory &dir, const Q
     }
     else {  // Search the DB by fingerprint.
       QString fingerprint;
-#ifdef HAVE_SONGFINGERPRINTING
+#ifdef HAVE_SONGTRACKING
       if (song_tracking_) {
         Chromaprinter chromaprinter(file);
         fingerprint = chromaprinter.CreateFingerprint();
